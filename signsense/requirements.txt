@@ -1,0 +1,4 @@
+# Python 3.9-3.12 required (MediaPipe does not support 3.14+)
+mediapipe>=0.10.31
+opencv-python>=4.8.0
+numpy>=1.24.0

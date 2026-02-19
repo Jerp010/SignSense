@@ -1,0 +1,1 @@
+"""SignSense - ASL Recognition Application."""
