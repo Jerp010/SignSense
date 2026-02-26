@@ -18,7 +18,7 @@ from detector.hand_tracker import HandTracker
 from detector.face_tracker import FaceTracker
 from detector.asl_classifier import ASLClassifier
 from utils.smoothing import PredictionSmoother
-from ui.overlay import Overlay
+from ui.overlay import Overlay, SignHoldTimer  # SignHoldTimer added
 
 
 def main() -> None:
@@ -48,6 +48,7 @@ def main() -> None:
     asl_classifier = ASLClassifier()
     smoother = PredictionSmoother(buffer_size=5, min_confidence=3)
     overlay = Overlay(window_title="SignSense - Prototype")
+    hold_timer = SignHoldTimer(hold_duration=1.5)  # seconds to hold before confirming
 
     fps_start_time = time.time()
     fps_frame_count = 0
@@ -68,10 +69,34 @@ def main() -> None:
             hand_data = hand_tracker.process_frame(rgb_frame)
             face_data = face_tracker.process_frame(rgb_frame)
 
-            raw_letter = None
+            # classifier.classify() now returns a dict {"letter", "confidence", "scores"}
+            # or None if no sign detected above threshold
+            classifier_result = None
             if hand_data and hand_data.get("landmarks"):
-                raw_letter = asl_classifier.classify(hand_data["landmarks"])
+                handedness = hand_data.get("handedness")  # pass if your tracker provides it
+                classifier_result = asl_classifier.classify(
+                    hand_data["landmarks"],
+                    handedness=handedness,
+                )
+
+            # Smoother still works on the letter string for stability
+            raw_letter = classifier_result["letter"] if classifier_result else None
             stable_letter = smoother.add_prediction(raw_letter)
+
+            # Rebuild result with smoothed letter so UI shows stabilized output
+            if stable_letter and classifier_result:
+                classifier_result["letter"] = stable_letter
+            elif not stable_letter:
+                classifier_result = None
+
+            # Update hold timer — returns confirmed letter when hold is complete
+            confirmed_letter = hold_timer.update(classifier_result)
+            if confirmed_letter:
+                print(f"Confirmed: {confirmed_letter}")
+
+            # Reset hold timer when hand leaves frame
+            if not hand_data:
+                hold_timer.reset()
 
             fps_frame_count += 1
             elapsed = time.time() - fps_start_time
@@ -87,7 +112,8 @@ def main() -> None:
                 hand_data,
                 fps,
                 face_data=face_data,
-                detected_letter=stable_letter,
+                classifier_result=classifier_result,  # replaces detected_letter
+                hold_timer=hold_timer,
             )
             cv2.imshow(overlay.window_title, output_frame)
 
