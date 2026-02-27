@@ -2,6 +2,7 @@ from typing import List, Optional, Dict
 import math
 from dataclasses import dataclass
 
+
 # ---------------------------------------------------
 # ASL Scoring-Based Static Alphabet Classifier
 # ---------------------------------------------------
@@ -154,7 +155,7 @@ class ASLClassifier:
 
     # ---------------------------------------------------
     # LETTER SCORING FUNCTIONS (A-H active)
-    # Each returns 0.0-1.0
+    # Each returns 0.0–1.0
     # Scoring philosophy:
     #   - Positive evidence adds score
     #   - Conflicting evidence (things that should NOT be true) subtracts
@@ -169,14 +170,12 @@ class ASLClassifier:
           - All 4 fingers curled into a compact fist (tips below PIPs)
           - Thumb tip is BESIDE the index finger pointing UP (not tucked under like E)
           - Thumb tip sits at roughly the same height as index MCP or above it
-          - The thumb does NOT touch the fingertips — it stands apart beside the fist
-          - Think: a raised fist with the thumb resting upright on the side
+          - The thumb does NOT touch the fingertips - it stands apart beside the fist
 
         Key differentiators:
           - vs E: E has thumb tucked LOW under curled tips (thumb.y > index MCP.y);
                   A has thumb HIGH beside the fist (thumb.y <= index MCP.y)
           - vs C: C is open/curved with a gap; A is a closed compact fist
-          - vs H: A has ALL 4 fingers curled; H has index+middle extended
           - vs S: S wraps thumb OVER fingertips from the front; A keeps thumb beside
         """
         score = 0.0
@@ -185,39 +184,37 @@ class ASLClassifier:
         if fs.index_ext or fs.middle_ext:
             return 0.0
 
-        # POSITIVE: All 4 fingers curled at PIP — base fist shape
+        # POSITIVE: All 4 fingers curled at PIP
         all_pip_curled = not any([fs.index_ext, fs.middle_ext, fs.ring_ext, fs.pinky_ext])
         score += 0.30 * all_pip_curled
 
-        # POSITIVE: Compact fist — index tip to pinky tip distance is small
+        # POSITIVE: Compact fist - index tip to pinky tip distance is small
         tip_spread = self._distance(lm[8], lm[20])
         compact_fist = tip_spread < 0.45 * scale
         score += 0.20 * compact_fist
 
-        # POSITIVE: Thumb tip is HIGH — at or above the index MCP (lm[5]).
-        # This is the defining A geometry: thumb pointing upward alongside the fist.
-        # E has the thumb LOW (tucked under fingertips); A has it UP beside the fist.
+        # POSITIVE: Thumb tip is HIGH - at or above the index MCP (lm[5]).
         thumb_high = lm[4].y <= lm[5].y + 0.02
-        score += 0.25 * thumb_high
+        score += 0.15 * thumb_high
 
-        # POSITIVE: Thumb tip close in x to index MCP — beside the fist, not pointing away
+        # POSITIVE: Thumb tip close in x to index MCP - beside the fist
         thumb_beside_x = abs(lm[4].x - lm[5].x) < 0.12
-        score += 0.15 * thumb_beside_x
+        score += 0.25 * thumb_beside_x
 
-        # POSITIVE: Thumb tip NOT close to any fingertip — thumb stands apart (not E)
+        # POSITIVE: Thumb tip NOT close to any fingertip - thumb stands apart
         thumb_clear_of_tips = all(
             self._distance(lm[4], lm[tip]) > 0.18 * scale
             for tip in [8, 12, 16, 20]
         )
-        score += 0.10 * thumb_clear_of_tips
+        score += 0.30 * thumb_clear_of_tips
 
         # PENALTY: Thumb LOW below index MCP = E-style tuck, not A
         thumb_tucked_low = lm[4].y > lm[5].y + 0.06
-        score -= 0.40 * thumb_tucked_low
+        score -= 0.50 * thumb_tucked_low
 
         # PENALTY: Thumb covering fingertips from above = S, not A
         thumb_covering = lm[4].y < lm[8].y - 0.01
-        score -= 0.20 * thumb_covering
+        score -= 0.30 * thumb_covering
 
         return max(0.0, min(1.0, score))
 
@@ -239,110 +236,83 @@ class ASLClassifier:
 
         # POSITIVE: All 4 fingers extended
         all_four_ext = all([fs.index_ext, fs.middle_ext, fs.ring_ext, fs.pinky_ext])
-        score += 0.40 * all_four_ext
+        score += 0.4 * all_four_ext
 
         # POSITIVE: Fingers pointing UP (tips above MCPs, not sideways)
         tips_above_mcps = (
-            lm[8].y < lm[5].y and
-            lm[12].y < lm[9].y and
-            lm[20].y < lm[17].y
+                lm[8].y < lm[5].y and
+                lm[12].y < lm[9].y and
+                lm[20].y < lm[17].y
         )
-        score += 0.20 * tips_above_mcps
+        score += 0.2 * tips_above_mcps
 
         # POSITIVE: Fingers tightly grouped (index-to-pinky x-spread small)
-        # Using raw coordinates - MediaPipe x is 0..1 normalized by frame width
+        # Using raw coordinates — MediaPipe x is 0..1 normalized by frame width
         tip_spread = abs(lm[8].x - lm[20].x)
         tight = tip_spread < 0.10
-        score += 0.20 * tight
+        score += 0.2 * tight
 
         # POSITIVE: Thumb tucked (tip below index PIP, not sticking out sideways)
         thumb_tucked = lm[4].y > lm[6].y
-        score += 0.20 * thumb_tucked
+        score += 0.2 * thumb_tucked
 
         # PENALTY: Thumb extended sideways = not B
-        score -= 0.30 * fs.thumb_side
+        score -= 0.3 * fs.thumb_side
 
         # PENALTY: Spread fingers suggest W, not B
         spread_penalty = tip_spread > 0.14
-        score -= 0.20 * spread_penalty
-
-        # PENALTY: Any finger tips are below their PIPs = fingers are curved, not straight (= C not B)
-        curved_count = sum([
-            lm[8].y > lm[6].y,
-            lm[12].y > lm[10].y,
-            lm[16].y > lm[14].y,
-            lm[20].y > lm[18].y,
-        ])
-        score -= 0.35 * (curved_count / 4)
+        score -= 0.2 * spread_penalty
 
         return max(0.0, min(1.0, score))
 
     def _score_c(self, lm, scale: float, fs: FingerState) -> float:
         """
-        C: Curved open hand forming a C shape. Fingers bent but NOT fully curled.
+        C: Curved open hand, fingers and thumb forming a C shape.
 
         Physical description:
-          - All fingers are partially curved (bent at knuckles, not straight, not fisted)
-          - Thumb curves away from the palm to face the fingers
-          - Medium gap between thumb tip and index tip — too wide for O, too closed for open hand
-          - The C opening faces sideways
+          - All fingers partially curved (not straight, not fisted)
+          - Thumb and index finger tips face each other with a gap
+          - The opening of the C is roughly horizontal
+          - Think of holding a can/cup shape
 
         Key differentiators:
-          - vs B: B has fully STRAIGHT extended fingers; C has curved/bent fingers
-          - vs A/E: those are fists (compact); C is open with visible gap
-          - vs G/H: those have fingers cleanly extended sideways; C fingers are CURVED
-          - vs O: O has thumb and index touching; C has a clear gap
+          - vs O: C has a larger gap between thumb and index (O they touch)
+          - vs B: C fingers are curved (not straight)
+          - vs A: C is open (A is fully closed fist)
         """
         score = 0.0
 
-        # HARD GATE: If any finger is cleanly extended sideways (G/H territory), not C.
-        # C fingers are curved — they do not have large x-travel from their MCPs.
-        idx_x_travel = abs(lm[8].x - lm[5].x)
-        mid_x_travel = abs(lm[12].x - lm[9].x)
-        if idx_x_travel > 0.10 * scale or mid_x_travel > 0.10 * scale:
-            return 0.0
-
-        # HARD GATE: If all 4 fingers are fully extended straight = B, not C.
-        if all([fs.index_ext, fs.middle_ext, fs.ring_ext, fs.pinky_ext]):
-            return 0.0
-
-        # POSITIVE: Fingers are CURVED — tips are below their PIPs but above their MCPs.
-        # This is the defining C geometry: partial bend, not straight, not fisted.
-        curved_count = 0
-        for tip_idx, pip_idx, mcp_idx in [(8,6,5), (12,10,9), (16,14,13), (20,18,17)]:
+        # POSITIVE: Fingers partially curved — tips between fully extended and PIP level
+        # Each fingertip should be between its MCP and PIP (partial curl zone)
+        partial_curve_count = 0
+        for tip_idx, pip_idx in [(8, 6), (12, 10), (16, 14), (20, 18)]:
+            # Extended = tip above PIP; fully curled = tip below MCP
+            # Partial = tip between PIP and MCP in y
             tip_y = lm[tip_idx].y
             pip_y = lm[pip_idx].y
-            mcp_y = lm[mcp_idx].y
-            # Tip is below PIP (some curl) AND above MCP (not fully fisted)
-            is_curved = tip_y > pip_y and tip_y < mcp_y + 0.05
-            curved_count += is_curved
-        score += 0.35 * (curved_count / 4)
+            # tip is below PIP (some curl) but still relatively high
+            if tip_y > pip_y - 0.02:  # slightly bent or flat
+                partial_curve_count += 1
+        score += 0.25 * (partial_curve_count / 4)
 
-        # POSITIVE: Medium gap between thumb tip and index tip (the C opening)
+        # POSITIVE: Gap between thumb tip and index tip is C-shaped (medium distance)
         dist_th_idx = self._distance(lm[4], lm[8])
-        c_gap = 0.25 * scale < dist_th_idx < 0.75 * scale
+        c_gap = 0.28 * scale < dist_th_idx < 0.70 * scale
         score += 0.35 * c_gap
 
-        # POSITIVE: Thumb and index tips at similar y-height (C opens sideways)
-        similar_height = abs(lm[4].y - lm[8].y) < 0.10
-        score += 0.20 * similar_height
+        # POSITIVE: Thumb and index tips at similar y-height (horizontal C opening)
+        similar_height = abs(lm[4].y - lm[8].y) < 0.12
+        score += 0.25 * similar_height
 
-        # POSITIVE: Thumb is curved away (not tucked low like E, not beside fist like A)
-        thumb_mid_height = lm[5].y - 0.05 < lm[4].y < lm[5].y + 0.10
-        score += 0.10 * thumb_mid_height
+        # POSITIVE: Thumb has curve (tip not fully extended sideways, not folded)
+        thumb_curved = 0.15 * scale < self._distance(lm[4], lm[3]) < 0.45 * scale
+        score += 0.15 * thumb_curved
 
-        # PENALTY: Compact fist (A or E)
-        tip_spread = self._distance(lm[8], lm[20])
-        fist_compact = tip_spread < 0.35 * scale
-        score -= 0.35 * fist_compact
+        # PENALTY: Fingers fully extended straight = B, not C
+        score -= 0.25 * (self._count_extended(fs) >= 3)
 
-        # PENALTY: Thumb HIGH tight beside fist = A, not C
-        thumb_tight_beside = abs(lm[4].x - lm[5].x) < 0.08 and lm[4].y < lm[5].y + 0.02
-        score -= 0.25 * thumb_tight_beside
-
-        # PENALTY: Thumb LOW tucked under = E, not C
-        thumb_tucked = lm[4].y > lm[5].y + 0.08
-        score -= 0.25 * thumb_tucked
+        # PENALTY: Closed fist = A or S, not C
+        score -= 0.45 * (self._count_deep_curled(fs) >= 3)
 
         return max(0.0, min(1.0, score))
 
@@ -380,71 +350,60 @@ class ASLClassifier:
 
         # POSITIVE: Index tip is clearly above other curled tips
         idx_above_mid = lm[8].y < lm[12].y - 0.05
-        score += 0.10 * idx_above_mid
+        score += 0.1 * idx_above_mid
 
         # PENALTY: Thumb extended sideways = L, not D
-        score -= 0.30 * fs.thumb_side
+        score -= 0.3 * fs.thumb_side
 
         # PENALTY: Multiple fingers extended = not D
-        score -= 0.20 * (self._count_extended(fs) >= 2)
+        score -= 0.2 * (self._count_extended(fs) >= 2)
 
         return max(0.0, min(1.0, score))
 
     def _score_e(self, lm, scale: float, fs: FingerState) -> float:
         """
-        E: All fingers bent with tips curled down toward the palm. Thumb tucked LOW under them.
+        E: All fingers bent with tips curled toward palm. Thumb tucked under finger pads.
 
         Physical description:
-          - All 4 fingertips curl downward toward the palm (like a claw or rake)
-          - Thumb is tucked LOW — its tip is BELOW the index MCP level
-          - The thumb tip rests close to or under the bent fingertips
-          - Looks like a flattened claw — NOT a tight round fist
+          - All 4 fingertips bend toward the palm (like clawing downward)
+          - Thumb is tucked under — its tip is near/under the bent fingers
+          - From the side it looks like a flattened claw
+          - Important: NOT a tight fist (A/S) — there's a slight gap, fingers aren't fully folded
 
         Key differentiators:
-          - vs A: A has thumb HIGH beside the fist (at or above index MCP);
-                  E has thumb LOW tucked under (below index MCP)
-          - vs C: C is open with gap; E is closed with thumb tucked under
-          - vs S: S wraps thumb over the FRONT of fist; E has thumb under fingertips
+          - vs A: E fingertips are near thumb; A is a closed fist with thumb beside
+          - vs S: E has all tips closer to thumb; S thumb covers tips from outside
+          - vs O: E all fingers involved; O just thumb meets index in a circle
         """
         score = 0.0
 
-        # HARD GATE: Any extended finger = not E
-        if any([fs.index_ext, fs.middle_ext, fs.ring_ext, fs.pinky_ext]):
-            return 0.0
+        # POSITIVE: All 4 fingers curled (tips below PIP)
+        all_curled = not any([fs.index_ext, fs.middle_ext, fs.ring_ext, fs.pinky_ext])
+        score += 0.25 * all_curled
 
-        # POSITIVE: All 4 fingers curled (already guaranteed by gate)
-        score += 0.20
-
-        # POSITIVE: Each fingertip close to thumb tip (claw curling toward thumb)
+        # POSITIVE: Each fingertip is close to thumb tip (claw toward thumb)
         thumb = lm[4]
         tip_close_count = sum(
             self._distance(tip, thumb) < 0.30 * scale
             for tip in [lm[8], lm[12], lm[16], lm[20]]
         )
-        score += 0.35 * (tip_close_count / 4)
+        score += 0.40 * (tip_close_count / 4)
 
-        # POSITIVE: Thumb tip is LOW — below the index MCP (lm[5]).
-        # This is the defining E geometry that separates it from A.
-        thumb_low = lm[4].y > lm[5].y + 0.03
-        score += 0.25 * thumb_low
-
-        # POSITIVE: Fingertips at similar heights (flat claw alignment, not round fist)
+        # POSITIVE: Fingertips are at roughly similar heights (flat claw, not rounded fist)
         tip_ys = [lm[8].y, lm[12].y, lm[16].y, lm[20].y]
         flat_alignment = (max(tip_ys) - min(tip_ys)) < 0.10
         score += 0.20 * flat_alignment
 
-        # PENALTY: Thumb HIGH beside fist = A, not E
-        thumb_high = lm[4].y < lm[5].y + 0.02
-        score -= 0.45 * thumb_high
+        # POSITIVE: Thumb tip is tucked under (at or above middle MCP level)
+        thumb_under = lm[4].y < lm[9].y + 0.05
+        score += 0.15 * thumb_under
 
-        # PENALTY: Thumb far from all fingertips = A (thumb standing alone), not E
-        thumb_isolated = all(
-            self._distance(lm[4], lm[tip]) > 0.25 * scale
-            for tip in [8, 12, 16, 20]
-        )
-        score -= 0.30 * thumb_isolated
+        # PENALTY: Thumb clearly beside fist = A, not E
+        thumb_beside = lm[4].y > lm[8].y + 0.02 and self._distance(lm[4], lm[6]) < 0.20 * scale
+        score -= 0.25 * thumb_beside
 
         return max(0.0, min(1.0, score))
+
     def _score_f(self, lm, scale: float, fs: FingerState) -> float:
         """
         F: Index and thumb form a circle (touching), middle/ring/pinky extended upward.
@@ -492,7 +451,6 @@ class ASLClassifier:
           - Index extends horizontally to the side at a level angle
           - The tip must be close to the same vertical height as its own MCP
           - Middle, ring, pinky all curled
-          - Thumb is NOT at the same y-level as index tip (that would look like C)
 
         Key differentiators:
           - vs D: D has large y-travel (pointing up); G has large x-travel (pointing sideways)
@@ -514,9 +472,8 @@ class ASLClassifier:
         strong_sideways = idx_x_travel > 0.12 * scale
         score += 0.45 * strong_sideways
 
-        # POSITIVE: Index tip is at NEARLY THE SAME y as its MCP (truly horizontal).
-        # Tightened to 0.07 — requires genuinely level angle, not just "not pointing up".
-        idx_y_level = abs(lm[8].y - lm[5].y) < 0.07
+        # POSITIVE: Index tip is at NEARLY THE SAME y as its MCP (truly horizontal)
+        idx_y_level = abs(lm[8].y - lm[5].y) < 0.12
         score += 0.35 * idx_y_level
 
         # POSITIVE: x-travel is larger than y-travel (more horizontal than vertical)
@@ -565,14 +522,13 @@ class ASLClassifier:
         mid_sideways = mid_x_travel > 0.12 * scale
         score += 0.25 * mid_sideways
 
-        # POSITIVE: Both tips at nearly the same y as their MCPs (truly horizontal).
-        # Tightened to 0.07 — must be genuinely level, not just not-pointing-up.
-        idx_y_level = abs(lm[8].y - lm[5].y) < 0.07
-        mid_y_level = abs(lm[12].y - lm[9].y) < 0.07
+        # POSITIVE: Both tips at nearly the same y as their MCPs (truly horizontal)
+        idx_y_level = abs(lm[8].y - lm[5].y) < 0.12
+        mid_y_level = abs(lm[12].y - lm[9].y) < 0.12
         both_level = idx_y_level and mid_y_level
         score += 0.25 * both_level
 
-        # POSITIVE: x-travel dominates over y-travel for both fingers (more horizontal than vertical)
+        # POSITIVE: x-travel dominates over y-travel for both fingers
         idx_more_horiz = idx_x_travel > abs(lm[8].y - lm[5].y) * 1.5
         mid_more_horiz = mid_x_travel > abs(lm[12].y - lm[9].y) * 1.5
         score += 0.10 * (idx_more_horiz and mid_more_horiz)
@@ -595,62 +551,61 @@ class ASLClassifier:
 
         return max(0.0, min(1.0, score))
 
-
     # ---------------------------------------------------
-    # DISABLED LETTERS (I-Y) - Scaffolded for future expansion
+    # DISABLED LETTERS (I–Y) — Scaffolded for future expansion
     # Re-enable by adding to the scores dict in classify()
     # ---------------------------------------------------
 
     def _score_i(self, lm, scale: float, fs: FingerState) -> float:
-        """I: Pinky up, others curled. (DISABLED - not in A-H scope)"""
+        """I: Pinky up, others curled."""
         return 0.0
 
     def _score_k(self, lm, scale: float, fs: FingerState) -> float:
-        """K: Index+middle up, thumb between. (DISABLED - not in A-H scope)"""
+        """K: Index+middle up, thumb between."""
         return 0.0
 
     def _score_l(self, lm, scale: float, fs: FingerState) -> float:
-        """L: Index up, thumb sideways L. (DISABLED - not in A-H scope)"""
+        """L: Index up, thumb sideways L."""
         return 0.0
 
     def _score_m(self, lm, scale: float, fs: FingerState) -> float:
-        """M: 3 fingers over tucked thumb. (DISABLED - not in A-H scope)"""
+        """M: 3 fingers over tucked thumb."""
         return 0.0
 
     def _score_n(self, lm, scale: float, fs: FingerState) -> float:
-        """N: 2 fingers over tucked thumb. (DISABLED - not in A-H scope)"""
+        """N: 2 fingers over tucked thumb."""
         return 0.0
 
     def _score_o(self, lm, scale: float, fs: FingerState) -> float:
-        """O: All fingers circle to thumb. (DISABLED - not in A-H scope)"""
+        """O: All fingers circle to thumb."""
         return 0.0
 
     def _score_s(self, lm, scale: float, fs: FingerState) -> float:
-        """S: Fist with thumb over tips. (DISABLED - not in A-H scope)"""
+        """S: Fist with thumb over tips."""
         return 0.0
 
     def _score_t(self, lm, scale: float, fs: FingerState) -> float:
-        """T: Thumb between index+middle. (DISABLED - not in A-H scope)"""
+        """T: Thumb between index+middle."""
         return 0.0
 
     def _score_u(self, lm, scale: float, fs: FingerState) -> float:
-        """U: Index+middle up together. (DISABLED - not in A-H scope)"""
+        """U: Index+middle up together."""
         return 0.0
 
     def _score_v(self, lm, scale: float, fs: FingerState) -> float:
-        """V: Index+middle up spread. (DISABLED - not in A-H scope)"""
+        """V: Index+middle up spread."""
         return 0.0
 
     def _score_w(self, lm, scale: float, fs: FingerState) -> float:
-        """W: 3 fingers up spread. (DISABLED - not in A-H scope)"""
+        """W: 3 fingers up spread."""
         return 0.0
 
     def _score_x(self, lm, scale: float, fs: FingerState) -> float:
-        """X: Index hooked. (DISABLED - not in A-H scope)"""
+        """X: Index hooked."""
         return 0.0
 
     def _score_y(self, lm, scale: float, fs: FingerState) -> float:
-        """Y: Thumb sideways + pinky up. (DISABLED - not in A-H scope)"""
+        """Y: Thumb sideways + pinky up."""
         return 0.0
 
     # ---------------------------------------------------
@@ -676,7 +631,7 @@ class ASLClassifier:
 
         fs = self._get_finger_states(landmarks, scale)
 
-        # Only A-H active - disabled letters return 0.0
+        # Only A-H active — disabled letters return 0.0
         scores = {
             "A": self._score_a(landmarks, scale, fs),
             "B": self._score_b(landmarks, scale, fs),
@@ -691,7 +646,7 @@ class ASLClassifier:
         best_letter = max(scores, key=scores.get)
         best_score = scores[best_letter]
 
-        # Debugging line (optional) - uncomment to print all scores each frame
+        # Debugging line (optional) — uncomment to print all scores each frame
         # print(f"{best_letter} ({best_score:.2f}) | " + " ".join(f"{k}:{v:.2f}" for k,v in sorted(scores.items())))
 
         if best_score < self.min_confidence:
@@ -702,7 +657,6 @@ class ASLClassifier:
             "confidence": round(best_score, 3),
             "scores": scores,
         }
-
 
 # ---------------------------------------------------
 # DEBUGGING GUIDE
