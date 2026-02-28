@@ -16,7 +16,8 @@ HAND_CONNECTIONS = [
 ]
 
 # Active letters in A-H scope (used for score bar display)
-ACTIVE_LETTERS = ["A", "B", "C", "D", "E", "F", "G", "H", "I"]
+# 'I' and 'J' are included for debugging/expansion
+ACTIVE_LETTERS = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"]
 
 
 class SignHoldTimer:
@@ -147,6 +148,7 @@ class Overlay:
         face_data: Optional[Dict[str, Any]] = None,
         classifier_result: Optional[Dict] = None,
         hold_timer: Optional[SignHoldTimer] = None,
+        dynamic_info: Optional[Dict[str, Any]] = None,  # name/stage data for multi-stage signs
     ) -> np.ndarray:
         """
         Draw overlay on the frame.
@@ -175,7 +177,7 @@ class Overlay:
         self._draw_fps(output_frame, fps)
 
         # Draw classifier result + hold timer panel (right side)
-        self._draw_sign_panel(output_frame, classifier_result, hold_timer)
+        self._draw_sign_panel(output_frame, classifier_result, hold_timer, dynamic_info)
 
         # Draw score bars for all active letters (bottom panel)
         if classifier_result is not None:
@@ -227,6 +229,7 @@ class Overlay:
         frame: np.ndarray,
         classifier_result: Optional[Dict],
         hold_timer: Optional["SignHoldTimer"],
+        dynamic_info: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Draw the main sign recognition panel on the right side.
@@ -315,6 +318,21 @@ class Overlay:
         if instr:
             cv2.putText(frame, instr, (bar_x, instr_y), self.font,
                         0.38, self.color_gray, 1, self.line_type)
+
+        # --- Dynamic stage indicator ---
+        # only display once the tracker has advanced past the initial state
+        if dynamic_info and dynamic_info.get("stage", 0) > 0:
+            stage = dynamic_info.get("stage", 0)
+            total = dynamic_info.get("total", None)
+            desc = dynamic_info.get("description") or ""
+            stage_text = f"Stage: {stage}"
+            if total:
+                stage_text += f"/{total}"
+            if desc:
+                stage_text += f" ({desc})"
+            dy = instr_y + 20
+            cv2.putText(frame, stage_text, (bar_x, dy), self.font,
+                        0.38, self.color_yellow, 1, self.line_type)
 
     def _draw_score_bars(self, frame: np.ndarray, scores: Dict[str, float]) -> None:
         """

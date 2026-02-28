@@ -19,6 +19,7 @@ from detector.face_tracker import FaceTracker
 from detector.asl_classifier_letters import ASLClassifierLetters
 from utils.smoothing import PredictionSmoother
 from ui.overlay import Overlay, SignHoldTimer  # SignHoldTimer added
+from signs.dynamic_signs import create_j_tracker
 
 
 def main() -> None:
@@ -49,6 +50,8 @@ def main() -> None:
     smoother = PredictionSmoother(buffer_size=5, min_confidence=3)
     overlay = Overlay(window_title="SignSense - Prototype")
     hold_timer = SignHoldTimer(hold_duration=1.5)  # seconds to hold before confirming
+    # dynamic sign tracker for letter J
+    j_tracker = create_j_tracker()
 
     fps_start_time = time.time()
     fps_frame_count = 0
@@ -94,9 +97,26 @@ def main() -> None:
             if confirmed_letter:
                 print(f"Confirmed: {confirmed_letter}")
 
+            # dynamic J tracker update - only expose UI once stage1 has been
+            # satisfied.  stage_idx is 0‑based; 0 = not started, 1 = handshape seen.
+            dynamic_info = None
+            if hand_data and hand_data.get("landmarks"):
+                stage_idx = j_tracker.update(hand_data.get("landmarks"), classifier_result)
+                if stage_idx > 0:
+                    dynamic_info = {
+                        "name": "J",
+                        "stage": stage_idx,
+                        "total": 2,
+                        "description": j_tracker.stage_description(),
+                    }
+            else:
+                dynamic_info = None
+                j_tracker.reset()
+
             # Reset hold timer when hand leaves frame
             if not hand_data:
                 hold_timer.reset()
+
 
             fps_frame_count += 1
             elapsed = time.time() - fps_start_time
@@ -114,6 +134,7 @@ def main() -> None:
                 face_data=face_data,
                 classifier_result=classifier_result,  # replaces detected_letter
                 hold_timer=hold_timer,
+                dynamic_info=dynamic_info,
             )
             cv2.imshow(overlay.window_title, output_frame)
 

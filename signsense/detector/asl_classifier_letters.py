@@ -622,57 +622,236 @@ class ASLClassifierLetters:
 
                 return max(0.0, min(1.0, score))
 
-    def _score_J(self, lm, scale: float, fs: FingerState) -> float:
-        """J: Index+middle up, thumb between."""
-        return 0.0
+    class JDetector:
+        """
+        Detects the ASL letter J by tracking the J-hook motion of the pinky tip.
 
-    def _score_k(self, lm, scale: float, fs: FingerState) -> float:
-        """K: Index+middle up, thumb between."""
-        return 0.0
+        J = I position (pinky up) + hook motion: pinky traces down, curves, hooks up.
 
-    def _score_l(self, lm, scale: float, fs: FingerState) -> float:
-        """L: Index up, thumb sideways L."""
-        return 0.0
+        The hook is detected by tracking three motion phases:
+        Phase 0 (READY):    Hand is in I position, waiting for motion to start.
+        Phase 1 (DOWN):     Pinky tip moves downward (y increases).
+        Phase 2 (HOOK):     Pinky tip moves upward (y decreases) after going down.
+        COMPLETE:           Hook confirmed — emit "J" once then reset.
 
-    def _score_m(self, lm, scale: float, fs: FingerState) -> float:
-        """M: 3 fingers over tucked thumb."""
-        return 0.0
+        The detector resets if:
+        - The hand leaves the I position during tracking
+        - Too many frames pass without phase progression (timeout)
+        - J is successfully detected (fires once then resets)
+        """
 
-    def _score_n(self, lm, scale: float, fs: FingerState) -> float:
-        """N: 2 fingers over tucked thumb."""
-        return 0.0
+    # Minimum pinky y-travel (in scale units) to count as "moved down"
+    DOWN_THRESHOLD = 0.08
+    # Minimum pinky y-travel back up (in scale units) to confirm the hook
+    UP_THRESHOLD = 0.05
+    # Frames allowed per phase before timeout/reset
+    PHASE_TIMEOUT = 45
+    # Frames the I position must be held before motion tracking begins
+    I_HOLD_FRAMES = 4
 
-    def _score_o(self, lm, scale: float, fs: FingerState) -> float:
-        """O: All fingers circle to thumb."""
-        return 0.0
+    def __init__(self):
+        self.reset()
 
-    def _score_s(self, lm, scale: float, fs: FingerState) -> float:
-        """S: Fist with thumb over tips."""
-        return 0.0
+    def reset(self):
+        self._phase = 0             # 0=ready, 1=going down, 2=hooking up
+        self._i_hold_count = 0      # frames held in I position
+        self._phase_frames = 0      # frames spent in current phase
+        self._down_start_y = None   # pinky y when downward motion began
+        self._down_peak_y = None    # lowest pinky y reached during down phase
+        self._fired = False         # True if J was just detected this frame
 
-    def _score_t(self, lm, scale: float, fs: FingerState) -> float:
-        """T: Thumb between index+middle."""
-        return 0.0
+    def update(self, landmarks, handedness: Optional[str], classifier_result: Optional[Dict]) -> Optional[str]:
+        """
+        Call every frame with the current landmarks and classifier result.
 
-    def _score_u(self, lm, scale: float, fs: FingerState) -> float:
-        """U: Index+middle up together."""
-        return 0.0
+        Returns "J" on the frame the J motion is completed, None otherwise.
+        """
+        self._fired = False
 
-    def _score_v(self, lm, scale: float, fs: FingerState) -> float:
-        """V: Index+middle up spread."""
-        return 0.0
+        if landmarks is None or len(landmarks) < 21:
+            self.reset()
+            return None
 
-    def _score_w(self, lm, scale: float, fs: FingerState) -> float:
-        """W: 3 fingers up spread."""
-        return 0.0
+        # Mirror landmarks for right hand (same as classifier)
+        lm = landmarks
+        if handedness == "Right":
+            mirrored = []
+            for pt in landmarks:
+                new_pt = type(pt)()
+                new_pt.x = 1.0 - pt.x
+                new_pt.y = pt.y
+                new_pt.z = getattr(pt, "z", 0)
+                mirrored.append(new_pt)
+            lm = mirrored
 
-    def _score_x(self, lm, scale: float, fs: FingerState) -> float:
-        """X: Index hooked."""
-        return 0.0
+        scale = math.hypot(lm[0].x - lm[9].x, lm[0].y - lm[9].y)
+        if scale < 0.01:
+            self.reset()
+            return None
 
-    def _score_y(self, lm, scale: float, fs: FingerState) -> float:
-        """Y: Thumb sideways + pinky up."""
-        return 0.0
+        pinky_y = lm[20].y
+        in_i_position = (
+            classifier_result is not None and
+            classifier_result.get("letter") == "I"
+        )
+
+        # ── Phase 0: Wait for a stable I hold ─────────────────────────────────
+        if self._phase == 0:
+            if in_i_position:
+                self._i_hold_count += 1
+            else:
+                self._i_hold_count = 0
+
+            if self._i_hold_count >= self.I_HOLD_FRAMES:
+                # I held long enough — start tracking motion
+                self._phase = 1
+                self._down_start_y = pinky_y
+                self._down_peak_y = pinky_y
+                self._phase_frames = 0
+            return None
+
+        # ── Phase 1: Pinky must move DOWN ──────────────────────────────────────
+        if self._phase == 1:
+            self._phase_frames += 1
+
+            # Track the lowest point the pinky reaches
+            if pinky_y > self._down_peak_y:
+                self._down_peak_y = pinky_y
+
+            down_travel = self._down_peak_y - self._down_start_y
+
+            # Enough downward travel — transition to hook-up phase
+            if down_travel > self.DOWN_THRESHOLD * scale:
+                self._phase = 2
+                self._phase_frames = 0
+                return None
+
+            # Timeout or hand left I position — reset
+            if self._phase_frames > self.PHASE_TIMEOUT or not in_i_position:
+                self.reset()
+            return None
+
+        # ── Phase 2: Pinky must hook back UP ──────────────────────────────────
+        if self._phase == 2:
+            self._phase_frames += 1
+
+            up_travel = self._down_peak_y - pinky_y  # positive = moving up
+
+            if up_travel > self.UP_THRESHOLD * scale:
+                # J hook complete!
+                self.reset()
+                return "J"
+
+            # Timeout — reset
+            if self._phase_frames > self.PHASE_TIMEOUT:
+                self.reset()
+            return None
+
+        return None
+
+    # def _score_J(self, lm, scale: float, fs: FingerState) -> float:
+    #     """J (static component):
+
+    #     This score only reflects the *initial* handshape used at the
+    #     beginning of the J gesture (essentially the "I" configuration with a
+    #     slight sideways orientation).  The dynamic arc motion is handled by
+    #     the state machine in ``signs/dynamic_signs.py`` and is **not** part of
+    #     this scoring function.
+
+    #     Positive evidence increases the score; conflicting features subtract
+    #     from it.  We intentionally bias the function toward being conservative
+    #     so that ``J`` won't dominate over other similar one‑finger signs.
+    #     """
+    #     score = 0.0
+
+    #     # --- HARD GATES --------------------------------------------------
+    #     # if the basic "I" shape isn't present, give up early
+    #     if not fs.pinky_ext:
+    #         return 0.0
+    #     if fs.index_ext or fs.middle_ext or fs.ring_ext:
+    #         return 0.0
+
+    #     # --- POSITIVE FEATURES ------------------------------------------
+    #     # pinky extended clearly above its MCP
+    #     pinky_high = lm[20].y < lm[17].y - 0.04
+    #     score += 0.40 * pinky_high
+
+    #     # other fingers curled down
+    #     others_curled = not (fs.index_ext or fs.middle_ext or fs.ring_ext)
+    #     score += 0.20 * others_curled
+
+    #     # thumb resting near palm (not flared out)
+    #     cx, cy = self._palm_center(lm)
+    #     thumb_to_palm = math.hypot(lm[4].x - cx, lm[4].y - cy)
+    #     thumb_resting = thumb_to_palm < 0.18 * scale
+    #     score += 0.10 * thumb_resting
+
+    #     # slight sideways orientation: width of palm (index MCP to pinky MCP)
+    #     palm_width = abs(lm[5].x - lm[17].x)
+    #     oriented_sideways = palm_width > 0.20 * scale
+    #     score += 0.10 * oriented_sideways
+
+    #     # a little extra credit if pinky is noticeably above the other tips
+    #     pinky_above_others = lm[20].y < min(lm[8].y, lm[12].y, lm[16].y) - 0.05
+    #     score += 0.05 * pinky_above_others
+
+    #     # --- PENALTIES ---------------------------------------------------
+    #     # thumb sticking out sideways isn't part of the I shape
+    #     score -= 0.25 * fs.thumb_side
+
+    #     # if more than one non‑pinky finger sneaks up, it's probably a different
+    #     # letter (B, C, etc.)
+    #     score -= 0.30 * (self._count_extended(fs) >= 2)
+
+    #     return max(0.0, min(1.0, score))
+
+    # def _score_k(self, lm, scale: float, fs: FingerState) -> float:
+    #     """K: Index+middle up, thumb between."""
+    #     return 0.0
+
+    # def _score_l(self, lm, scale: float, fs: FingerState) -> float:
+    #     """L: Index up, thumb sideways L."""
+    #     return 0.0
+
+    # def _score_m(self, lm, scale: float, fs: FingerState) -> float:
+    #     """M: 3 fingers over tucked thumb."""
+    #     return 0.0
+
+    # def _score_n(self, lm, scale: float, fs: FingerState) -> float:
+    #     """N: 2 fingers over tucked thumb."""
+    #     return 0.0
+
+    # def _score_o(self, lm, scale: float, fs: FingerState) -> float:
+    #     """O: All fingers circle to thumb."""
+    #     return 0.0
+
+    # def _score_s(self, lm, scale: float, fs: FingerState) -> float:
+    #     """S: Fist with thumb over tips."""
+    #     return 0.0
+
+    # def _score_t(self, lm, scale: float, fs: FingerState) -> float:
+    #     """T: Thumb between index+middle."""
+    #     return 0.0
+
+    # def _score_u(self, lm, scale: float, fs: FingerState) -> float:
+    #     """U: Index+middle up together."""
+    #     return 0.0
+
+    # def _score_v(self, lm, scale: float, fs: FingerState) -> float:
+    #     """V: Index+middle up spread."""
+    #     return 0.0
+
+    # def _score_w(self, lm, scale: float, fs: FingerState) -> float:
+    #     """W: 3 fingers up spread."""
+    #     return 0.0
+
+    # def _score_x(self, lm, scale: float, fs: FingerState) -> float:
+    #     """X: Index hooked."""
+    #     return 0.0
+
+    # def _score_y(self, lm, scale: float, fs: FingerState) -> float:
+    #     """Y: Thumb sideways + pinky up."""
+    #     return 0.0
 
     # ---------------------------------------------------
     # CLASSIFIER
@@ -697,6 +876,14 @@ class ASLClassifierLetters:
 
         fs = self._get_finger_states(landmarks, scale)
 
+        Jvar = self.j_detector.update(landmarks, handedness, None)
+        if Jvar == "J":
+            return {
+                "letter": "J",
+                "confidence": 0.95,
+                "scores": {"J": 0.95},
+            }
+
         # Only A-H active — disabled letters return 0.0
         scores = {
             "A": self._score_a(landmarks, scale, fs),
@@ -708,7 +895,8 @@ class ASLClassifierLetters:
             "G": self._score_g(landmarks, scale, fs),
             "H": self._score_h(landmarks, scale, fs),
             "I": self._score_i(landmarks, scale, fs),
-            # "J": self._score_j(landmarks, scale, fs),
+            "J": Jvar == "J",
+            # "J": self._score_J(landmarks, scale, fs),
             # "K": self._score_k(landmarks, scale, fs),
             # "L": self._score_l(landmarks, scale, fs),
             # "M": self._score_m(landmarks, scale, fs),
