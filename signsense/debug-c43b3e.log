@@ -1,2 +1,0 @@
-{"sessionId": "c43b3e", "runId": "run1", "hypothesisId": "A", "location": "hand_tracker.py:34", "message": "MediaPipe module inspection", "data": {"version": "0.10.32", "attributes": ["Image", "ImageFormat", "tasks"], "has_solutions": false, "module_type": "<class 'module'>"}, "timestamp": 1771523959678}
-{"sessionId": "c43b3e", "runId": "run1", "hypothesisId": "B", "location": "hand_tracker.py:60", "message": "Before accessing mp.solutions", "data": {"attempting_access": "mp.solutions"}, "timestamp": 1771523959678}

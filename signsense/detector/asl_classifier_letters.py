@@ -51,7 +51,7 @@ class FingerState:
     scale: float
 
 
-class ASLClassifier:
+class ASLClassifierLetters:
 
     def __init__(self) -> None:
         self.min_confidence = 0.6  # minimum score required to return letter
@@ -263,6 +263,14 @@ class ASLClassifier:
         spread_penalty = tip_spread > 0.14
         score -= 0.2 * spread_penalty
 
+        # PENALTY: Thumb not lying on the palm. For a true B the thumb
+        # should be tucked over the palm area; an open hand often leaves it
+        # off to the side or elevated. We measure thumb distance to the
+        # approximate palm center and penalize if it's too far away.
+        cx, cy = self._palm_center(lm)
+        thumb_to_palm = math.hypot(lm[4].x - cx, lm[4].y - cy)
+        score -= 0.3 * (thumb_to_palm > 0.20 * scale)
+
         return max(0.0, min(1.0, score))
 
     def _score_c(self, lm, scale: float, fs: FingerState) -> float:
@@ -293,7 +301,7 @@ class ASLClassifier:
             # tip is below PIP (some curl) but still relatively high
             if tip_y > pip_y - 0.02:  # slightly bent or flat
                 partial_curve_count += 1
-        score += 0.25 * (partial_curve_count / 4)
+        score += 0.45 * (partial_curve_count / 4)
 
         # POSITIVE: Gap between thumb tip and index tip is C-shaped (medium distance)
         dist_th_idx = self._distance(lm[4], lm[8])
@@ -302,17 +310,24 @@ class ASLClassifier:
 
         # POSITIVE: Thumb and index tips at similar y-height (horizontal C opening)
         similar_height = abs(lm[4].y - lm[8].y) < 0.12
-        score += 0.25 * similar_height
+        score += 0.20 * similar_height
 
         # POSITIVE: Thumb has curve (tip not fully extended sideways, not folded)
         thumb_curved = 0.15 * scale < self._distance(lm[4], lm[3]) < 0.45 * scale
-        score += 0.15 * thumb_curved
+        score += 0.25 * thumb_curved
 
         # PENALTY: Fingers fully extended straight = B, not C
-        score -= 0.25 * (self._count_extended(fs) >= 3)
+        score -= 0.35 * (self._count_extended(fs) >= 3)
 
         # PENALTY: Closed fist = A or S, not C
         score -= 0.45 * (self._count_deep_curled(fs) >= 3)
+
+        # PENALTY: Strong sideways (horizontal) travel on index or middle is
+        # indicative of G/H rather than a rounded C shape.
+        idx_x_travel = abs(lm[8].x - lm[5].x)
+        mid_x_travel = abs(lm[12].x - lm[9].x)
+        sideways = idx_x_travel > 0.12 * scale or mid_x_travel > 0.12 * scale
+        score -= 0.25 * sideways
 
         return max(0.0, min(1.0, score))
 
@@ -435,10 +450,15 @@ class ASLClassifier:
         score += 0.20 * index_down
 
         # PENALTY: Index extended = not the F circle
-        score -= 0.30 * fs.index_ext
+        score -= 0.40 * fs.index_ext
 
         # PENALTY: Thumb-index too far apart = might be C or open hand
         score -= 0.20 * (th_idx_dist > 0.30 * scale)
+
+        # PENALTY: F requires the three fingers (middle, ring, pinky) to be
+        # extended. If they are not, it's likely an `I` (pinky-only) or another
+        # curled configuration — penalize strongly to avoid F/I confusion.
+        score -= 0.35 * (not three_up)
 
         return max(0.0, min(1.0, score))
 
@@ -552,12 +572,58 @@ class ASLClassifier:
         return max(0.0, min(1.0, score))
 
     # ---------------------------------------------------
-    # DISABLED LETTERS (I–Y) — Scaffolded for future expansion
-    # Re-enable by adding to the scores dict in classify()
+    # TODO: LETTERS K-Z (currently inactive [I-Z])
     # ---------------------------------------------------
 
     def _score_i(self, lm, scale: float, fs: FingerState) -> float:
-        """I: Pinky up, others curled."""
+                """I: Pinky up, others curled, thumb rests on top of curled fingers.
+
+                Physical description:
+                    - Pinky (lm[20]) is extended upward
+                    - Index/middle/ring are curled toward the palm
+                    - Thumb rests near the curled fingers/palm (not sticking out)
+
+                Key differentiators:
+                    - vs Y: Y has thumb + pinky; I has thumb resting on curled fingers
+                    - vs open palm/B: other fingers are curled, not straight
+                """
+                score = 0.0
+
+                # HARD GATE: Pinky must be extended to be an I
+                if not fs.pinky_ext:
+                        return 0.0
+
+                # POSITIVE: Pinky extended
+                score += 0.40 * fs.pinky_ext
+
+                # POSITIVE: Other fingers should be curled (index/middle/ring)
+                others_curled = not (fs.index_ext or fs.middle_ext or fs.ring_ext)
+                score += 0.20 * others_curled
+
+                # POSITIVE: Pinky tip noticeably above its MCP (clearly raised)
+                pinky_high = lm[20].y < lm[17].y - 0.04
+                score += 0.15 * pinky_high
+
+                # POSITIVE: Pinky higher than the other fingertips (distinct)
+                pinky_above_others = lm[20].y < min(lm[8].y, lm[12].y, lm[16].y) - 0.05
+                score += 0.10 * pinky_above_others
+
+                # POSITIVE: Thumb resting near the palm/curled fingers (not far away)
+                cx, cy = self._palm_center(lm)
+                thumb_to_palm = math.hypot(lm[4].x - cx, lm[4].y - cy)
+                thumb_resting = thumb_to_palm < 0.18 * scale
+                score += 0.05 * thumb_resting
+
+                # PENALTY: Thumb extended sideways (thumb sticking out) is not I
+                score -= 0.25 * fs.thumb_side
+
+                # PENALTY: If multiple fingers are extended it's unlikely to be I
+                score -= 0.30 * (self._count_extended(fs) >= 2)
+
+                return max(0.0, min(1.0, score))
+
+    def _score_J(self, lm, scale: float, fs: FingerState) -> float:
+        """J: Index+middle up, thumb between."""
         return 0.0
 
     def _score_k(self, lm, scale: float, fs: FingerState) -> float:
@@ -641,6 +707,24 @@ class ASLClassifier:
             "F": self._score_f(landmarks, scale, fs),
             "G": self._score_g(landmarks, scale, fs),
             "H": self._score_h(landmarks, scale, fs),
+            "I": self._score_i(landmarks, scale, fs),
+            # "J": self._score_j(landmarks, scale, fs),
+            # "K": self._score_k(landmarks, scale, fs),
+            # "L": self._score_l(landmarks, scale, fs),
+            # "M": self._score_m(landmarks, scale, fs),
+            # "N": self._score_n(landmarks, scale, fs),
+            # "O": self._score_o(landmarks, scale, fs),
+            # "P": self._score_p(landmarks, scale, fs),
+            # "Q": self._score_q(landmarks, scale, fs),
+            # "R": self._score_r(landmarks, scale, fs),
+            # "S": self._score_s(landmarks, scale, fs),
+            # "T": self._score_t(landmarks, scale, fs),
+            # "U": self._score_u(landmarks, scale, fs),
+            # "V": self._score_v(landmarks, scale, fs),
+            # "W": self._score_w(landmarks, scale, fs),
+            # "X": self._score_x(landmarks, scale, fs),
+            # "Y": self._score_y(landmarks, scale, fs),
+            # "Z": self._score_z(landmarks, scale, fs),
         }
 
         best_letter = max(scores, key=scores.get)

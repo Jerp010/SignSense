@@ -16,7 +16,7 @@ import time
 
 from detector.hand_tracker import HandTracker
 from detector.face_tracker import FaceTracker
-from detector.asl_classifier import ASLClassifier
+from detector.asl_classifier_letters import ASLClassifierLetters
 from utils.smoothing import PredictionSmoother
 from ui.overlay import Overlay, SignHoldTimer  # SignHoldTimer added
 
@@ -45,7 +45,7 @@ def main() -> None:
         max_num_hands=1,
     )
     face_tracker = FaceTracker()
-    asl_classifier = ASLClassifier()
+    asl_classifier_letters = ASLClassifierLetters()
     smoother = PredictionSmoother(buffer_size=5, min_confidence=3)
     overlay = Overlay(window_title="SignSense - Prototype")
     hold_timer = SignHoldTimer(hold_duration=1.5)  # seconds to hold before confirming
@@ -74,7 +74,7 @@ def main() -> None:
             classifier_result = None
             if hand_data and hand_data.get("landmarks"):
                 handedness = hand_data.get("handedness")  # pass if your tracker provides it
-                classifier_result = asl_classifier.classify(
+                classifier_result = asl_classifier_letters.classify(
                     hand_data["landmarks"],
                     handedness=handedness,
                 )
