@@ -470,7 +470,7 @@ class PlayModeRenderer:
             det = classifier_result.get("letter", "")
             conf = classifier_result.get("confidence", 0)
             det_col = GREEN if det == sign.letter else (180, 100, 80)
-            cv2.putText(frame, f"Seen: {det} {conf*100:.0f}%",
+            cv2.putText(frame, f"Seen: {det} {conf*100:.0f}%", 
                         (px + 6, py + ph - 10), FONT, 0.32, det_col, 1, cv2.LINE_AA)
 
     def _draw_progress_bar(self, frame, tracker):
@@ -552,7 +552,7 @@ class PlayModeRenderer:
         cv2.addWeighted(overlay, 0.25, frame, 0.75, 0, frame)
 
         # Big tick + letter
-        msg = f"✓  {sign.letter}  Correct!"
+        msg = f"{sign.letter}  Correct!"
         (mw, mh), _ = cv2.getTextSize(msg, FONT, 1.4, 3)
         cv2.putText(frame, msg, ((W - mw) // 2, H // 2 - 10),
                     FONT, 1.4, GREEN, 3, cv2.LINE_AA)

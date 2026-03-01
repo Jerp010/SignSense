@@ -307,6 +307,22 @@ class ASLClassifierLetters:
                           for t in [8, 12, 16, 20])
         score += 0.30 * thumb_clear
 
+        # POSITIVE: Deep curl confirmation — ensures fingers are really folded into a fist
+        # This helps separate A from looser curved shapes like C.
+        score += 0.20 * (self._count_deep_curled(fs) >= 3)
+
+        # PENALTY: Distinguish from C (curved-open shape)
+        # - If several fingers are only partially curved (not deeply curled), that's C-like.
+        # - If the thumb-index gap is in the medium range (C has a noticeable gap), penalise.
+        partial_curve_count = sum(
+            1 for tip_idx, pip_idx in [(8, 6), (12, 10), (16, 14), (20, 18)]
+            if lm[tip_idx].y > lm[pip_idx].y - 0.02
+        )
+        score -= 0.40 * (partial_curve_count >= 2)
+
+        thumb_index_dist = self._distance(lm[4], lm[8])
+        score -= 0.35 * (0.28 * scale < thumb_index_dist < 0.70 * scale)
+
         # PENALTY: Thumb is tucked LOW (well below the index MCP) -> this is E, not A.
         score -= 0.50 * (lm[4].y > lm[5].y + 0.06)
 
