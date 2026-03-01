@@ -93,20 +93,16 @@ class FingerState:
                     (stronger signal than just checking PIP -- confirms a real fist)
     """
     # True = finger tip is ABOVE (lower y than) its PIP -> finger is extended/up.
-    # This detects vertical extension but does **not** flag a finger pointing
-    # purely sideways.  Sideways extension is tracked separately below.
+    # Only detects vertical extension. Use *_side_ext below for sideways fingers.
     index_ext:        bool
     middle_ext:       bool
     ring_ext:         bool
     pinky_ext:        bool
 
-    # True = finger tip shows clear horizontal travel from its MCP, indicating
-    # a sideways-extended finger.  G and H rely on these so that a level hand
-    # still meets the "extended" condition without needing a vertical tilt.
+    # True = finger tip has clear horizontal travel (>12% of scale) from its MCP.
+    # Lets G and H detect sideways-pointing fingers without requiring a vertical tilt.
     index_side_ext:   bool
     middle_side_ext:  bool
-    ring_side_ext:    bool
-    pinky_side_ext:   bool
 
     # True = finger tip is BELOW (higher y than) its MCP -> deeply folded into palm
     index_deep_curl:  bool
@@ -172,11 +168,9 @@ class ASLClassifierLetters:
 
     def _is_extended(self, tip, pip) -> bool:
         """
-        Returns True when a finger is extended upward (tip above its PIP).
+        Returns True when a finger is extended (pointing upward).
         In MediaPipe, y=0 is the TOP of the frame, so a tip that is
-        ABOVE its PIP joint has a SMALLER y value.  Note that this helper
-        only checks vertical extension; horizontal (sideways) extension is
-        handled separately by side-extension flags in FingerState.
+        ABOVE its PIP joint has a SMALLER y value.
         """
         return tip.y < pip.y
 
@@ -193,7 +187,8 @@ class ASLClassifierLetters:
         Pre-compute all per-finger states once, before any scorer runs.
         Each finger uses its own tip and joint landmarks (see reference above).
         """
-        # helper for sideways extension: tip has travelled far horizontally from the MCP
+        # Sideways extension: tip has moved >12% of scale horizontally from its MCP.
+        # Only index and middle are needed (G and H are the only sideways-finger signs).
         def _side_ext(tip, mcp):
             return abs(tip.x - mcp.x) > 0.12 * scale
 
@@ -204,11 +199,9 @@ class ASLClassifierLetters:
             ring_ext         = self._is_extended(lm[16], lm[14]),  # ring tip vs ring PIP
             pinky_ext        = self._is_extended(lm[20], lm[18]),  # pinky tip vs pinky PIP
 
-            # Sideways extension flags allow horizontal pointing to count too
-            index_side_ext   = _side_ext(lm[8],  lm[5]),
-            middle_side_ext  = _side_ext(lm[12], lm[9]),
-            ring_side_ext    = _side_ext(lm[16], lm[13]),
-            pinky_side_ext   = _side_ext(lm[20], lm[17]),
+            # Sideways extension (index and middle only)
+            index_side_ext   = _side_ext(lm[8],  lm[5]),   # index tip vs index MCP
+            middle_side_ext  = _side_ext(lm[12], lm[9]),   # middle tip vs middle MCP
 
             # Deeply curled = tip below MCP (tip.y > mcp.y)
             index_deep_curl  = self._is_deeply_curled(lm[8],  lm[5]),  # index tip vs index MCP
@@ -327,30 +320,18 @@ class ASLClassifierLetters:
         # E has tips near the thumb (claw shape); A keeps the thumb clear.
         thumb_clear = all(self._distance(lm[4], lm[t]) > 0.18 * scale
                           for t in [8, 12, 16, 20])
-        score += 0.70 * thumb_clear
+        score += 0.30 * thumb_clear
 
-        # POSITIVE: Deep curl confirmation — ensures fingers are really folded into a fist
-        # This helps separate A from looser curved shapes like C.
-        score += 0.70 * (self._count_deep_curled(fs) >= 3)
-
-        # PENALTY: Distinguish from C (curved-open shape)
-        # - If several fingers are only partially curved (not deeply curled), that's C-like.
-        # - If the thumb-index gap is in the medium range (C has a noticeable gap), penalise.
-        partial_curve_count = sum(
-            1 for tip_idx, pip_idx in [(8, 6), (12, 10), (16, 14), (20, 18)]
-            if lm[tip_idx].y > lm[pip_idx].y - 0.02
-        )
-        score -= 0.40 * (partial_curve_count >= 2)
-
-        thumb_index_dist = self._distance(lm[4], lm[8])
-        score -= 0.35 * (0.28 * scale < thumb_index_dist < 0.70 * scale)
+        # POSITIVE: Deep curl confirmation - fingers are truly folded into a fist.
+        # Separates A from looser curved shapes like C.
+        score += 0.20 * (self._count_deep_curled(fs) >= 3)
 
         # PENALTY: Thumb is tucked LOW (well below the index MCP) -> this is E, not A.
         score -= 0.50 * (lm[4].y > lm[5].y + 0.06)
 
         # PENALTY: Thumb tip is ABOVE the index fingertip -> thumb crosses over the top
         # of the fist, which is the S sign, not A.
-        score -= 0.40 * (lm[4].y < lm[8].y - 0.01)
+        score -= 0.30 * (lm[4].y < lm[8].y - 0.01)
 
         return max(0.0, min(1.0, score))
 
@@ -459,16 +440,26 @@ class ASLClassifierLetters:
         mid_sideways = abs(lm[12].x - lm[9].x) > 0.12 * scale
         score -= 0.25 * (idx_sideways or mid_sideways)
 
-        # PENALTY: If one of the fingers is both level and sideways it looks very much
-        # like a G/H hand rather than the rounded curve expected for C.
-        score -= 0.15 * (
-            (abs(lm[8].y - lm[5].y) < 0.12 and idx_sideways) or
-            (abs(lm[12].y - lm[9].y) < 0.12 and mid_sideways)
-        )
+        # PENALTY: Straight fingers are characteristic of B/W (open hand)
+        # or pure sideways pointing (G/H).  Discourage C when fingers are
+        # geometrically straight even if detected as side-extended.
+        straight_count = 0
+        for tip_idx, pip_idx, mcp_idx in [(8, 6, 5), (12, 10, 9), (16, 14, 13), (20, 18, 17)]:
+            ang = self._angle_3pts(lm[tip_idx], lm[pip_idx], lm[mcp_idx])
+            if ang > 165:  # very straight
+                straight_count += 1
 
-        # PENALTY: Straight finger angles (close to 180°) are not C-like either.
-        score -= 0.20 * (self._angle_3pts(lm[8], lm[5], lm[6]) > 170)
-        score -= 0.20 * (self._angle_3pts(lm[12], lm[9], lm[10]) > 170)
+        # Penalise proportional to how many fingers are essentially straight.
+        # This prevents C from scoring highly when the hand is nearly flat.
+        score -= 0.30 * (straight_count / 4)
+
+        # Extra penalty if a sideways-extension flag exists and that finger is straight.
+        # This covers the case where index/middle appear side-extended but are actually
+        # straight fingers (likely G/H/B), which should lower the C score further.
+        if fs.index_side_ext and self._angle_3pts(lm[8], lm[6], lm[5]) > 165:
+            score -= 0.20
+        if fs.middle_side_ext and self._angle_3pts(lm[12], lm[10], lm[9]) > 165:
+            score -= 0.20
 
         return max(0.0, min(1.0, score))
 
@@ -629,7 +620,9 @@ class ASLClassifierLetters:
           vs H : H has TWO fingers pointing sideways; G has one
           vs C : C fingers are CURVED; G index is cleanly extended
         """
-        # HARD GATE: Index must be extended (vertical OR horizontal) - without this G is impossible.
+        # HARD GATE: Index must be extended vertically OR sideways.
+        # A level sideways G won't trigger index_ext (vertical-only), so we
+        # also accept index_side_ext.
         if not (fs.index_ext or fs.index_side_ext):
             return 0.0
 
@@ -649,31 +642,26 @@ class ASLClassifierLetters:
         # slightly, not pointing sideways.
         score += 0.45 * (x_travel > 0.12 * scale)
 
-        # POSITIVE: Index tip is at nearly the SAME HEIGHT as its MCP - truly horizontal.
-        # If tip is much higher than MCP the finger points upward (= D), not sideways.
-        # Relaxed threshold to give the player more room when the hand is perfectly level.
+        # POSITIVE: Index tip at nearly the same height as its MCP.
+        # Relaxed to 0.20 (from 0.12) — a real sideways G often has little vertical deviation.
         score += 0.35 * (abs(lm[8].y - lm[5].y) < 0.20)
 
-        # POSITIVE: x-travel is larger than y-travel - the finger goes more sideways than vertical.
-        # Allow a little more vertical component by reducing the dominance factor.
-        score += 0.10 * (x_travel > abs(lm[8].y - lm[5].y) * 1.2)
+        # POSITIVE: x-travel dominates y-travel (factor 1.2, relaxed from 1.5).
+        score += 0.15 * (x_travel > abs(lm[8].y - lm[5].y) * 1.2)
 
-        # POSITIVE: finger is straight (not curved like a C).  Angle at the
-        # index MCP formed by tip->MCP->PIP should be nearly 180°.
-        score += 0.10 * (self._angle_3pts(lm[8], lm[5], lm[6]) > 160)
+        # POSITIVE: Index finger is straight (not curved like C).
+        # Vertex MUST be PIP (lm[6]), not MCP — for a sideways finger all three
+        # points are collinear from MCP's perspective, giving ~0° regardless of
+        # curl. At PIP vertex: straight finger = ~180°, curled = <160°.
+        score += 0.10 * (self._angle_3pts(lm[8], lm[6], lm[5]) > 160)
 
-        # PENALTY: C-like curvature on the index finger (tip dips below the PIP).
+        # PENALTY: C-like curvature — tip dips below its PIP, forming a hook.
         score -= 0.30 * (lm[8].y > lm[6].y + 0.02)
 
-        # PENALTY: If the thumb-index gap sits squarely in the C range, it's
-        # probably not a clean one-finger G.
-        thumb_index_dist = self._distance(lm[4], lm[8])
-        score -= 0.25 * (0.28 * scale < thumb_index_dist < 0.70 * scale)
-
-        # PENALTY: Index tip is well ABOVE its MCP -> finger is pointing upward, which is D.
+        # PENALTY: Index tip is well ABOVE its MCP -> pointing upward (= D).
         score -= 0.50 * (lm[8].y < lm[5].y - 0.10)
 
-        # PENALTY: Very little x-travel -> finger is not pointing sideways at all.
+        # PENALTY: Very little x-travel -> not pointing sideways at all.
         score -= 0.40 * (x_travel < 0.08 * scale)
 
         return max(0.0, min(1.0, score))
@@ -694,8 +682,9 @@ class ASLClassifierLetters:
           vs U : U points UPWARD; H points SIDEWAYS
           vs V : V spreads apart; H keeps fingers together
         """
-        # HARD GATE: Both index AND middle must be extended (vertical OR horizontal).
-        # If only index is extended it is G; if neither are, it is A/E/S etc.
+        # HARD GATE: Both index AND middle must be extended vertically OR sideways.
+        # A level sideways H won't trigger vertical _ext flags, so we accept
+        # the side_ext alternatives.
         if not (fs.index_ext or fs.index_side_ext) or not (fs.middle_ext or fs.middle_side_ext):
             return 0.0
 
@@ -712,26 +701,26 @@ class ASLClassifierLetters:
         score += 0.25 * (mx > 0.12 * scale)
 
         # POSITIVE: Both tips are at nearly the SAME HEIGHT as their own MCPs - truly horizontal.
-        # Relaxed threshold to allow a level hand without requiring a tilt.
+        # Without this check a diagonal "up-and-sideways" hand would score high.
+        # Relaxed to 0.20 (from 0.12) — same reasoning as G above.
         both_level = (abs(lm[8].y  - lm[5].y) < 0.20 and
                       abs(lm[12].y - lm[9].y)  < 0.20)
         score += 0.25 * both_level
 
-        # POSITIVE: x-travel dominates over y-travel for BOTH fingers simultaneously.
-        # Lowered dominance factor to give more leeway for a small upward/downward
-        # tilt while still rewarding a predominantly sideways gesture.
+        # POSITIVE: x-travel dominates y-travel (factor 1.2, relaxed from 1.5).
         idx_horiz = ix > abs(lm[8].y  - lm[5].y) * 1.2
         mid_horiz = mx > abs(lm[12].y - lm[9].y)  * 1.2
         score += 0.10 * (idx_horiz and mid_horiz)
 
-        # POSITIVE: both fingers should be straight, not curving inward like a C.
-        score += 0.10 * (self._angle_3pts(lm[8], lm[5], lm[6]) > 160)
-        score += 0.10 * (self._angle_3pts(lm[12], lm[9], lm[10]) > 160)
+        # POSITIVE: Both fingers are straight (not C-curved).
+        # Vertex is PIP (lm[6]/lm[10]), not MCP — same reason as G scorer above.
+        # Straight = ~180°, curled = <160°.
+        score += 0.10 * (self._angle_3pts(lm[8],  lm[6],  lm[5])  > 160)
+        score += 0.10 * (self._angle_3pts(lm[12], lm[10], lm[9])  > 160)
 
-        # PENALTY: if either finger is noticeably bent (angle < 150°) it starts
-        # to look like a curve rather than a clean H.
-        score -= 0.25 * (self._angle_3pts(lm[8], lm[5], lm[6]) < 150)
-        score -= 0.25 * (self._angle_3pts(lm[12], lm[9], lm[10]) < 150)
+        # PENALTY: Noticeably bent fingers (C-shaped) rather than clean straight H.
+        score -= 0.25 * (self._angle_3pts(lm[8],  lm[6],  lm[5])  < 150)
+        score -= 0.25 * (self._angle_3pts(lm[12], lm[10], lm[9])  < 150)
 
         # POSITIVE: Ring and pinky are curled - only index and middle should be out.
         score += 0.15 * (not fs.ring_ext and not fs.pinky_ext)
