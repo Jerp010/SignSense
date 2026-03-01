@@ -34,6 +34,8 @@ import math
 import time
 from typing import Optional, Dict, List, Any
 
+from utils.logger import logger
+
 from signs.sign_registry import ACTIVE_SIGNS, SignType, SignEntry
 from signs.dynamic_signs  import get_detector
 
@@ -238,9 +240,14 @@ class StageTracker:
         Call every frame.
         Returns True the moment the current sign is confirmed (advance ready).
         """
+        # track state transitions for logging
+        prev_state = self._state
+
         sign = self.current_sign
         if sign is None:
             self._state = "COMPLETE"
+            if prev_state != self._state:
+                logger.debug(f"StageTracker state change {prev_state} -> {self._state}")
             return False
 
         letter = classifier_result.get("letter") if classifier_result else None
@@ -255,6 +262,9 @@ class StageTracker:
             if done:
                 self._state        = "CONFIRMING"
                 self._confirm_time = time.time()
+                logger.info(f"Dynamic sign '{sign.letter}' detected, entering CONFIRMING")
+                if prev_state != self._state:
+                    logger.debug(f"StageTracker state change {prev_state} -> {self._state}")
                 return True
             return False
 
@@ -279,11 +289,16 @@ class StageTracker:
         elif self._state == "CONFIRMING":
             pass  # waiting for user to press Next
 
+        # log any state change that occurred during this update
+        if self._state != prev_state:
+            logger.debug(f"StageTracker state change {prev_state} -> {self._state} (sign={sign.letter if sign else None})")
+
         return False
 
     def advance(self):
         """Move to the next sign. Called when user presses SPACE / Next."""
         self._idx  += 1
+        logger.info(f"Advancing to next sign ({self.stage_num}/{self.total_stages})")
         self._state = "WAITING"
         self._hold_start   = None
         self._confirm_time = None
@@ -295,7 +310,10 @@ class StageTracker:
         sign = self.current_sign
         if sign and sign.sign_type == SignType.DYNAMIC:
             self._dynamic_det = get_detector(sign.letter)
+            logger.debug(f"Loaded dynamic detector for {sign.letter}")
         else:
+            if self._dynamic_det:
+                logger.debug("Clearing dynamic detector")
             self._dynamic_det = None
 
 

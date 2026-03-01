@@ -26,10 +26,9 @@ Each session creates a new timestamped log file (format: `YYYYMMDD_HHMMSS`).
 - Timing for each initialization step
 
 ### Runtime Events
-- **State transitions**: When moving between MAIN_MENU -> LEVEL_SELECT -> PLAY/DEBUG -> MAIN_MENU
-- **Frame processing**: FPS updates (every second)
-- **Detections**: Hand/face tracking updates (logged at DEBUG level)
-- **User actions**: Button clicks, ESC presses, window events
+  Each time the camera is opened we log two values: the time spent inside `open_camera()` itself (`delay`) and the total startup duration from mode entry until the camera became ready (`startup`).
+- **Detections**: Hand/face tracking updates (logged at DEBUG level).
+- **Stage tracker events**: Dynamic sign completion, advancement to next sign, and other state changes.  When a letter is confirmed the log records the letter and frame number (also marked in performance stats).- **User actions**: Main menu and level‑select button clicks, ESC presses, window events
 
 ### Errors & Failures
 - Camera failures (camera unavailable, frame read errors)
@@ -159,7 +158,7 @@ After each session closes, a summary report is generated showing:
 - Errors encountered
 - Average operation times
 - Slowest operations
-
+The report now also includes timings for play/debug mode initialization and any errors recorded by the performance tracker.
 ## In Code: Using the Logger
 
 ### Basic Logging

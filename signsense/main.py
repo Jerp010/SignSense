@@ -26,6 +26,21 @@ Transitions
 
 import sys
 
+# ensure logging subsystem is initialised immediately
+# bring in the logger *instance* plus helper functions
+from utils.logger import (
+    logger,
+    log_init,
+    log_success,
+    log_error,
+    log_warning,
+    log_session_start,
+    log_session_end,
+    TimingContext,
+    perf_tracker,
+)
+
+
 if sys.version_info >= (3, 14):
     print(
         "SignSense requires Python 3.9–3.12. "
@@ -188,21 +203,35 @@ def run_level_select(W=640, H=480) -> str:
 
 def run_play_mode(level_id: str, W=640, H=480) -> str:
     """Returns 'menu' when done or ESC pressed."""
+    # log entry time to track pre‑camera delay
+    mode_entry = time.perf_counter()
+    log_init("Play mode", f"level={level_id}")
+
+    cam_start_time = time.perf_counter()
     cap = open_camera(W, H)
+    cam_delay = time.perf_counter() - cam_start_time
     if cap is None:
+        log_error("Play mode", RuntimeError("camera open failed"))
         return "menu"
+    total_startup = time.perf_counter() - mode_entry
+    log_success(
+        f"Open camera {W}x{H} | delay={cam_delay:.4f}s | startup={total_startup:.4f}s"
+    )
 
     # Build stage list from registry
     signs_for_level = ACTIVE_SIGNS   # currently only one level
 
-    hand_tracker  = HandTracker(min_detection_confidence=0.6,
-                                min_tracking_confidence=0.6,
-                                max_num_hands=1)
-    face_tracker  = FaceTracker()
-    classifier    = ASLClassifierLetters()
-    smoother      = PredictionSmoother(buffer_size=5, min_confidence=3)
-    stage_tracker = StageTracker(signs_for_level)
-    renderer      = PlayModeRenderer(W, H)
+    # initialize detectors/components together so we can time the entire step
+    with TimingContext("Initialize play mode detectors and components"):
+        hand_tracker  = HandTracker(min_detection_confidence=0.6,
+                                    min_tracking_confidence=0.6,
+                                    max_num_hands=1)
+        face_tracker  = FaceTracker()
+        classifier    = ASLClassifierLetters()
+        smoother      = PredictionSmoother(buffer_size=5, min_confidence=3)
+        stage_tracker = StageTracker(signs_for_level)
+        renderer      = PlayModeRenderer(W, H)
+    log_success(f"Play mode initialized with {len(signs_for_level)} signs")
 
     WIN = "SignSense"
     cv2.setMouseCallback(WIN, _mouse_cb)
@@ -210,13 +239,21 @@ def run_play_mode(level_id: str, W=640, H=480) -> str:
     fps_start = time.time()
     fps_count = 0
     fps       = 30.0
+    frame_num = 0  # running count for debug logging
 
     global _mouse_event
+    # track overall camera run duration
+    cam_start = time.time()
     try:
         while True:
+            frame_start = time.perf_counter()
             frame = read_frame(cap)
+            frame_time = time.perf_counter() - frame_start
+            perf_tracker.record_timing("camera_read", frame_time)
             if frame is None:
+                logger.warning("Camera frame read returned None, exiting play mode loop")
                 break
+            frame_num += 1
 
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             hand_data = hand_tracker.process_frame(rgb)
@@ -248,11 +285,16 @@ def run_play_mode(level_id: str, W=640, H=480) -> str:
                     classifier_result = None
 
             # --- Stage update -------------------------------------------
-            stage_tracker.update(
+            confirmed = stage_tracker.update(
                 classifier_result,
                 landmarks=landmarks,
                 handedness=handedness,
             )
+            if confirmed:
+                cur = stage_tracker.current_sign
+                letter = cur.letter if cur else "?"
+                logger.info(f"Confirmed letter {letter} at frame {frame_num}")
+                perf_tracker.record_timing("letter_confirm", 0.0)  # marker, zero duration
 
             # --- FPS --------------------------------------------------------
             fps_count += 1
@@ -263,6 +305,7 @@ def run_play_mode(level_id: str, W=640, H=480) -> str:
                 fps_start = time.time()
                 hand_tracker.update_timestamp_increment(fps)
                 face_tracker.update_timestamp_increment(fps)
+                logger.debug(f"Frame {frame_num} | FPS: {fps:.1f}")
 
             # --- Render ---------------------------------------------------
             # Scale frame to current window size so layout fills the window
@@ -280,6 +323,7 @@ def run_play_mode(level_id: str, W=640, H=480) -> str:
             # --- Events ---------------------------------------------------
             key = cv2.waitKey(1) & 0xFF
             if key == 27:   # ESC
+                logger.info("ESC pressed, exiting play mode")
                 return "menu"
             if key != 255:
                 renderer.handle_event("key", key, stage_tracker)
@@ -308,6 +352,9 @@ def run_play_mode(level_id: str, W=640, H=480) -> str:
         pass
     finally:
         release_camera(cap)
+        elapsed = time.time() - cam_start
+        log_success(f"Camera ran for {elapsed:.2f}s")
+        log_success(f"Frames processed: {frame_num}")
 
     return "menu"
 
@@ -318,18 +365,30 @@ def run_play_mode(level_id: str, W=640, H=480) -> str:
 
 def run_debug_mode(W=640, H=480) -> str:
     """Returns 'menu' when ESC pressed."""
+    mode_entry = time.perf_counter()
+    log_init("Debug mode")
+    cam_start_time = time.perf_counter()
     cap = open_camera(W, H)
+    cam_delay = time.perf_counter() - cam_start_time
     if cap is None:
+        log_error("Debug mode", RuntimeError("camera open failed"))
         return "menu"
+    total_startup = time.perf_counter() - mode_entry
+    log_success(
+        f"Open camera {W}x{H} | delay={cam_delay:.4f}s | startup={total_startup:.4f}s"
+    )
 
-    hand_tracker = HandTracker(min_detection_confidence=0.6,
-                               min_tracking_confidence=0.6,
-                               max_num_hands=1)
-    face_tracker  = FaceTracker()
-    classifier    = ASLClassifierLetters()
-    smoother      = PredictionSmoother(buffer_size=5, min_confidence=3)
-    overlay       = Overlay(window_title="SignSense - Debug")
-    hold_timer    = SignHoldTimer(hold_duration=1.5)
+    # time the initialization of debug components
+    with TimingContext("Initialize debug mode components"):
+        hand_tracker = HandTracker(min_detection_confidence=0.6,
+                                   min_tracking_confidence=0.6,
+                                   max_num_hands=1)
+        face_tracker  = FaceTracker()
+        classifier    = ASLClassifierLetters()
+        smoother      = PredictionSmoother(buffer_size=5, min_confidence=3)
+        overlay       = Overlay(window_title="SignSense - Debug")
+        hold_timer    = SignHoldTimer(hold_duration=1.5)
+    log_success("Debug mode components initialized")
 
     WIN = "SignSense"
     cv2.setMouseCallback(WIN, _mouse_cb)
@@ -337,12 +396,16 @@ def run_debug_mode(W=640, H=480) -> str:
     fps_start = time.time()
     fps_count = 0
     fps       = 30.0
+    frame_num = 0
+    cam_start = time.time()  # track duration of camera usage in this mode for logging purposes
 
     try:
         while True:
             frame = read_frame(cap)
             if frame is None:
+                logger.warning("Camera frame read returned None, exiting debug mode loop")
                 break
+            frame_num += 1
 
             rgb       = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             hand_data = hand_tracker.process_frame(rgb)
@@ -363,7 +426,9 @@ def run_debug_mode(W=640, H=480) -> str:
 
             confirmed = hold_timer.update(classifier_result)
             if confirmed:
-                print(f"[debug] Confirmed: {confirmed}")
+                let = classifier_result["letter"] if classifier_result else "?"
+                logger.info(f"Debug confirmed sign '{let}' (frame {frame_num})")
+                perf_tracker.record_timing("letter_confirm", 0.0)
 
             if not hand_data:
                 hold_timer.reset()
@@ -376,6 +441,7 @@ def run_debug_mode(W=640, H=480) -> str:
                 fps_start = time.time()
                 hand_tracker.update_timestamp_increment(fps)
                 face_tracker.update_timestamp_increment(fps)
+                logger.debug(f"Debug frame {frame_num} | FPS: {fps:.1f}")
 
             win_w, win_h = get_window_size(WIN, W, H)
             if (win_w, win_h) != (frame.shape[1], frame.shape[0]):
@@ -393,6 +459,7 @@ def run_debug_mode(W=640, H=480) -> str:
 
             key = cv2.waitKey(1) & 0xFF
             if key == 27:
+                logger.info("ESC pressed, exiting debug mode")
                 return "menu"
 
             if cv2.getWindowProperty(WIN, cv2.WND_PROP_VISIBLE) < 1:
@@ -402,6 +469,9 @@ def run_debug_mode(W=640, H=480) -> str:
         pass
     finally:
         release_camera(cap)
+        elapsed = time.time() - cam_start
+        log_success(f"Camera ran for {elapsed:.2f}s")
+        log_success(f"Frames processed: {frame_num}")
 
     return "menu"
 
@@ -411,6 +481,9 @@ def run_debug_mode(W=640, H=480) -> str:
 # ---------------------------------------------------------------------------
 
 def main():
+    # log session boundaries
+    log_session_start()
+
     DEFAULT_W, DEFAULT_H = 640, 480
     WIN = "SignSense"
 
@@ -431,15 +504,18 @@ def main():
 
             if state == "MAIN_MENU":
                 action = run_main_menu(W, H)
+                logger.info(f"Main menu action: {action}")
                 if action == "play":
                     state = "LEVEL_SELECT"
                 elif action == "debug":
                     state = "DEBUG"
                 else:
                     state = "QUIT"
+                logger.info(f"STATE: {state}")
 
             elif state == "LEVEL_SELECT":
                 action = run_level_select(W, H)
+                logger.info(f"Level select result: {action}")
                 if action == "back":
                     state = "MAIN_MENU"
                 elif action == "quit":
@@ -447,6 +523,7 @@ def main():
                 else:
                     state     = "PLAY"
                     _level_id = action
+                logger.info(f"STATE: {state}")
 
             elif state == "PLAY":
                 run_play_mode(_level_id, W, H)
@@ -462,6 +539,7 @@ def main():
     finally:
         cv2.destroyAllWindows()
         print("SignSense closed.")
+        log_session_end()
 
 
 if __name__ == "__main__":

@@ -19,6 +19,8 @@ import math
 import time
 from typing import Optional, Tuple
 
+from utils.logger import logger
+
 
 # ---------------------------------------------------------------------------
 # Palette  — dark tech / arcade aesthetic
@@ -184,9 +186,11 @@ class MainMenu:
         elif event_type == "mouse_click":
             for b in self._buttons:
                 if b.contains(*data) and not b.disabled:
+                    logger.info(f"Main menu click: {b.value}")
                     return b.value
         elif event_type == "key":
             if data == 27:   # ESC
+                logger.info("Main menu action: quit (ESC)")
                 return "quit"
         return None
 
@@ -269,12 +273,15 @@ class LevelSelect:
                 b.set_hover(*data)
         elif event_type == "mouse_click":
             if self._back.contains(*data):
+                logger.info("Level select: back")
                 return "back"
             for b in self._buttons:
                 if b.contains(*data) and not b.disabled:
+                    logger.info(f"Level select choice: {b.value}")
                     return b.value
         elif event_type == "key":
             if data == 27:
+                logger.info("Level select: back (ESC)")
                 return "back"
         return None
 
