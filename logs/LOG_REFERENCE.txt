@@ -1,0 +1,133 @@
+╔════════════════════════════════════════════════════════════════════╗
+║              SignSense Logging - Quick Reference Card               ║
+╚════════════════════════════════════════════════════════════════════╝
+
+LOG SYMBOLS
+═══════════
+  [OK]  Success/Complete      Example: SUCCESS: Camera opened and configured
+  [FAIL]  Failure/Error         Example: FAILED: Open camera 640x480
+  [WARN]  Warning/Slow (>1s)    Example: SLOW DONE: Initialize ... | Time: 5.23s
+  [TIME]  Timing Info           Example: DONE: Process frame | Time: 0.033s
+  ->  Entering State        Example: Entering PLAY MODE | level=letters
+  <-  Exiting/Returning     Example: Play mode action: menu
+
+LOG LEVELS
+══════════
+  DEBUG    (File only)     Frame-by-frame details, resize events
+  INFO     (Console+File)  Normal flow, state changes, success messages
+  WARNING  (Console+File)  Slow operations, recoverable errors
+  ERROR    (Console+File)  Component failures, exceptions
+  CRITICAL (Console+File)  System-level crashes
+
+WHAT TO LOOK FOR WHEN SOMETHING IS BROKEN
+═════════════════════════════════════════════
+
+1. Search for "[FAIL]" or "ERROR"
+   These mark actual failures. First ERROR is usually the root cause.
+
+2. Search for "[WARN]" (warnings)  
+   Times > 1s indicate slow loading or processing.
+
+3. Search for specific component names:
+   - HandTracker    - Hand detection issues
+   - FaceTracker    - Face detection issues  
+   - Classifier     - ASL sign classification issues
+   - Overlay        - Display/rendering issues
+   - Camera         - Webcam initialization issues
+
+COMMON ERROR PATTERNS
+═════════════════════
+
+Empty hand detections?
+  -> Look for: "Frame X | FPS: X" entries
+  -> If you see FPS drops, processing is slow
+
+App won't start?
+  -> Look for earliest ERROR message
+  -> Usually: Camera, HandTracker, or FaceTracker initialization
+
+Signs not recognized?
+  -> Look for Classifier errors in log
+  -> Check FPS - if too low, might be affecting recognition
+
+EXAMPLE LOG SESSION
+═══════════════════
+
+2026-03-01 12:05:30 | INFO | SignSense | main | ======================================================================
+2026-03-01 12:05:30 | INFO | SignSense | main | SIGNSENSE SESSION STARTED [Start]
+2026-03-01 12:05:30 | INFO | SignSense | main | Log file: D:.../signsense_20260301_120530.log
+2026-03-01 12:05:30 | INFO | SignSense | main | Python: 3.11.0
+2026-03-01 12:05:30 | INFO | SignSense | main | Platform: win32
+2026-03-01 12:05:31 | INFO | SignSense | main | STATE: MAIN_MENU [State change]
+2026-03-01 12:05:31 | INFO | SignSense | main | Rendering MAIN MENU [Entering menu]
+2026-03-01 12:05:35 | INFO | SignSense | main | Main menu action: play [User action]
+2026-03-01 12:05:35 | INFO | SignSense | main | STATE: LEVEL_SELECT
+2026-03-01 12:05:35 | INFO | SignSense | main | -> Rendering LEVEL SELECT
+2026-03-01 12:05:38 | INFO | SignSense | main | Level select result: letters
+2026-03-01 12:05:38 | INFO | SignSense | main | STATE: PLAY
+2026-03-01 12:05:38 | INFO | SignSense | main | -> Entering PLAY MODE | level=letters
+2026-03-01 12:05:38 | INFO | SignSense | logger | [INIT] Initializing Camera — resolution 640x480
+2026-03-01 12:05:38 | INFO | SignSense | logger | [OK] Open camera 640x480 | Time: 0.0021s
+2026-03-01 12:05:38 | INFO | SignSense | logger | [OK] Camera opened and configured
+2026-03-01 12:05:38 | INFO | SignSense | logger | SUCCESS: Initialize play mode detectors... | Time: 5.2341s [SLOW >1s]
+2026-03-01 12:05:43 | WARNING | SignSense | logger | SLOW DONE: ... | Time: 5.2341s [WARNING logged]
+2026-03-01 12:05:43 | INFO | SignSense | logger | [OK] Play mode initialized with 10 signs
+2026-03-01 12:05:43 | DEBUG | SignSense | logger | Frame 15 | FPS: 30.0 <- Frame processing
+2026-03-01 12:05:44 | DEBUG | SignSense | logger | Frame 45 | FPS: 30.1
+2026-03-01 12:06:12 | INFO | SignSense | main | Exiting PLAY MODE | processed 450 frames
+2026-03-01 12:06:12 | INFO | SignSense | main | STATE: MAIN_MENU
+... (performance report at end) ...
+
+
+DEBUGGING WORKFLOW
+══════════════════
+
+1. Run: python main.py
+2. Do your action (play, debug, etc.)
+3. Press ESC to exit
+4. Open logs/signsense_*.log (most recent)
+5. Search for patterns:
+   - First "ERROR" -> root cause
+   - "[WARN]" entries -> slow operations
+   - "Frame X | FPS" -> processing speed
+   - Component name + "Error" -> specific failure
+6. Look at PERFORMANCE REPORT at end for statistics
+
+PERFORMANCE REPORT MEANINGS
+═════════════════════════════
+
+Count      - How many times this operation ran
+Avg        - Average time per operation (in seconds)
+Min/Max    - Fastest and slowest times
+Good times:
+  - Open camera:           < 0.1s
+  - Initialize detectors:  < 2s (can be 3-5s on first load)
+  - Process frame:         < 0.033s (for 30 FPS)
+  - Render overlay:        < 0.01s
+
+Bad times:
+  - Any > 5s = very slow
+  - Any frame > 0.1s = drops FPS
+  - Recurring errors = pattern issue
+
+
+QUICK POWERSHELL COMMANDS
+═════════════════════════
+
+# Show last 100 lines
+Get-Content logs/signsense_*.log | Select-Object -Last 100
+
+# Find all errors
+Get-Content logs/signsense_*.log | Select-String "ERROR|FAILED"
+
+# Find all warnings
+Get-Content logs/signsense_*.log | Select-String "[WARN]|WARNING"
+
+# Show performance report only
+Get-Content logs/signsense_*.log | Select-String -Pattern "^[^|]*\|.*PERFORMANCE|^[^|]*\|.*Timing Statistics:|^[^|]*\|.*Count:" -Context 1
+
+# Find specific component errors
+Get-Content logs/signsense_*.log | Select-String "Classifier|HandTracker|FaceTracker"
+
+# Count total frames processed
+(Get-Content logs/signsense_*.log | Select-String "Frame [0-9]+").Count

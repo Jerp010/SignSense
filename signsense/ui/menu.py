@@ -229,7 +229,7 @@ class MainMenu:
 
 LEVELS = [
     {"id": "letters", "label": "Level 1 - Letters A-J",
-     "sub": "10 signs  •  static + dynamic", "enabled": True},
+     "sub": "10 signs static + dynamic", "enabled": True},
     {"id": "numbers", "label": "Level 2 - Numbers 1-10",
      "sub": "Coming soon", "enabled": False},
 ]
@@ -239,7 +239,7 @@ class LevelSelect:
     """
     Renders the level selection screen.
 
-    handle_event → "back" | level_id str | None
+    handle_event "back" | level_id str | None
     """
 
     def __init__(self, W=640, H=480):
@@ -260,7 +260,7 @@ class LevelSelect:
             )
         # Back button
         self._back = Button(20, self.H - 60, 130, self.H - 20,
-                            "← BACK", "back", (70, 60, 100))
+                            "BACK", "back", (70, 60, 100))
 
     def handle_event(self, event_type, data=None) -> Optional[str]:
         if event_type == "mouse_move":

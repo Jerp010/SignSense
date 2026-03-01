@@ -1,0 +1,72 @@
+"""
+Quick Debug Guide for SignSense
+================================
+
+After running the application, check the logs/ directory for:
+  - logs/signsense_YYYYMMDD_HHMMSS.log (most recent log file)
+
+Three ways to find issues:
+
+1. QUICK CHECK (Windows PowerShell)
+   ================================
+   cd logs
+   Get-Content (Get-Item -Path . | Sort-Object LastWriteTime -Descending | Select-Object -First 1) -Tail 100
+
+   This shows the last 100 lines of the newest log.
+
+2. SEARCH FOR ERRORS (PowerShell)
+   ===============================
+   Get-Content logs/signsense_*.log | Select-String -Pattern "Error|ERROR" | Select-Object -Last 20
+
+   Shows the last 20 errors that occurred.
+
+3. PERFORMANCE ISSUES (PowerShell)
+   ================================
+   Get-Content logs/signsense_*.log | Select-String -Pattern "WARNING"
+
+   Shows all slow operations and warnings.
+
+Common Issues & Solutions:
+==========================
+
+SLOW DONE: Initialize play mode detectors | Time: 8.2341s
+-> Models loading slowly. Check that hand_landmarker.task and face_landmarker.task exist
+  in signsense/assets/models/
+
+FAILED: Open camera 640x480 | FileNotFoundError
+-> Camera error. Try:
+  - Close other apps using camera (Zoom, Teams, etc.)
+  - Reconnect camera USB cable
+  - Restart application
+
+Error in Classifier: RuntimeError | frame 42
+-> Model failed on frame 42. Usually temporary. If repeats, restart app.
+
+Frame 1500 | FPS: 12.3
+-> FPS dropping from 30 to 12. Performance issue:
+  - Close background apps
+  - Lower window resolution
+  - Check CPU usage
+
+For full documentation, see: LOGGING.md
+"""
+
+# When running main.py, logs are automatically created and saved to:
+# logs/signsense_20260301_120530.log (example timestamp)
+#
+# The log file contains:
+# - Application startup info (Python version, platform)
+# - Component initialization times and failures
+# - Every state transition (MAIN_MENU -> PLAY -> DEBUG, etc.)  
+# - Frame-by-frame processing stats (FPS, errors)
+# - Performance summary at shutdown
+#
+# Key log entries to look for:
+#   [OK] = Success
+#   [FAIL] = Failure
+#   [WARN] = Warning (slow operation > 1s)
+#   [TIME] = Timing info
+#   -> = Entering state
+#   <- = Exiting state / returning from action
+#
+# All messages include timestamps so you can correlate with events.

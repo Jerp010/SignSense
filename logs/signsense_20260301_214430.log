@@ -1,0 +1,39 @@
+2026-03-01 21:44:31 | INFO     | SignSense            | log_session_start    | ======================================================================
+2026-03-01 21:44:31 | INFO     | SignSense            | log_session_start    | SIGNSENSE SESSION STARTED
+2026-03-01 21:44:31 | INFO     | SignSense            | log_session_start    | ======================================================================
+2026-03-01 21:44:31 | INFO     | SignSense            | log_session_start    | Log file: D:\CODE FOLDER JEFF\SignSense\logs\signsense_20260301_214430.log
+2026-03-01 21:44:31 | INFO     | SignSense            | log_session_start    | Python: 3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]
+2026-03-01 21:44:31 | INFO     | SignSense            | log_session_start    | Platform: win32
+2026-03-01 21:44:31 | INFO     | SignSense            | log_session_start    | ======================================================================
+2026-03-01 21:44:32 | INFO     | SignSense            | main                 | SignSense window created: 640x480
+2026-03-01 21:44:32 | INFO     | SignSense            | main                 | Drag the window corner to resize.
+2026-03-01 21:44:32 | INFO     | SignSense            | main                 | STATE: MAIN_MENU
+2026-03-01 21:44:32 | INFO     | SignSense            | run_main_menu        | -> Rendering MAIN MENU
+2026-03-01 21:44:34 | INFO     | SignSense            | run_main_menu        | Main menu action: play
+2026-03-01 21:44:34 | INFO     | SignSense            | main                 | STATE: LEVEL_SELECT
+2026-03-01 21:44:34 | INFO     | SignSense            | run_level_select     | -> Rendering LEVEL SELECT
+2026-03-01 21:44:35 | INFO     | SignSense            | run_level_select     | Level select result: letters
+2026-03-01 21:44:35 | INFO     | SignSense            | main                 | STATE: PLAY
+2026-03-01 21:44:35 | INFO     | SignSense            | run_play_mode        | -> Entering PLAY MODE | level=letters
+2026-03-01 21:44:35 | INFO     | SignSense            | log_init             | INIT: Initializing Camera - resolution 640x480
+2026-03-01 21:44:35 | INFO     | SignSense            | __enter__            | START: Open camera 640x480
+2026-03-01 21:44:39 | INFO     | SignSense            | log_success          | SUCCESS: Camera opened and configured
+2026-03-01 21:44:39 | INFO     | SignSense            | __exit__             | DONE: Open camera 640x480 | Time: 3.4624s
+2026-03-01 21:44:39 | INFO     | SignSense            | __enter__            | START: Initialize play mode detectors and components
+2026-03-01 21:44:39 | DEBUG    | SignSense            | __exit__             | DONE: Initialize play mode detectors and components | Time: 0.0883s
+2026-03-01 21:44:39 | INFO     | SignSense            | log_success          | SUCCESS: Play mode initialized with 10 signs
+2026-03-01 21:44:39 | ERROR    | SignSense            | log_error            | Error in PlayMode: UnboundLocalError: cannot access local variable 'SignType' where it is not associated with a value [Unexpected error in main loop]
+2026-03-01 21:44:39 | DEBUG    | SignSense            | release_camera       | Releasing camera
+2026-03-01 21:44:40 | INFO     | SignSense            | log_success          | SUCCESS: Camera released
+2026-03-01 21:44:40 | INFO     | SignSense            | run_play_mode        | Exiting PLAY MODE | processed 1 frames
+2026-03-01 21:44:40 | INFO     | SignSense            | main                 | STATE: MAIN_MENU
+2026-03-01 21:44:40 | INFO     | SignSense            | run_main_menu        | -> Rendering MAIN MENU
+2026-03-01 21:44:58 | INFO     | SignSense            | run_main_menu        | Main menu action: quit
+2026-03-01 21:44:58 | INFO     | SignSense            | log_session_end      | ======================================================================
+2026-03-01 21:44:58 | INFO     | SignSense            | log_session_end      | SIGNSENSE SESSION ENDED
+2026-03-01 21:44:58 | INFO     | SignSense            | log_session_end      | ======================================================================
+2026-03-01 21:44:58 | INFO     | SignSense            | report               | ======================================================================
+2026-03-01 21:44:58 | INFO     | SignSense            | report               | PERFORMANCE REPORT
+2026-03-01 21:44:58 | INFO     | SignSense            | report               | ======================================================================
+2026-03-01 21:44:58 | INFO     | SignSense            | report               | ======================================================================
+2026-03-01 21:44:58 | INFO     | SignSense            | main                 | SignSense closed.
