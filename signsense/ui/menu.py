@@ -1,0 +1,311 @@
+"""
+ui/menu.py
+==========
+OpenCV-drawn menus for SignSense.
+
+States
+------
+  MAIN_MENU       → show Play / Debug / Quit
+  LEVEL_SELECT    → show available levels (Letters A-J, Numbers coming soon)
+
+All menus are rendered purely with cv2 — no camera required.
+Each render() call returns the frame to display.
+Mouse clicks and key presses are handled by handle_event().
+"""
+
+import cv2
+import numpy as np
+import math
+import time
+from typing import Optional, Tuple
+
+
+# ---------------------------------------------------------------------------
+# Palette  — dark tech / arcade aesthetic
+# ---------------------------------------------------------------------------
+BG          = (15,  12,  20)    # near-black with purple tint
+PANEL       = (28,  24,  38)
+ACCENT      = (0,  210, 255)    # cyan
+ACCENT2     = (180,  60, 255)   # purple
+TEXT_WHITE  = (240, 235, 250)
+TEXT_DIM    = (110, 100, 130)
+TEXT_WARN   = (60,  180, 255)
+GREEN       = (80,  220, 120)
+RED         = (60,   60, 200)
+GOLD        = (40,  200, 255)
+
+FONT        = cv2.FONT_HERSHEY_DUPLEX
+FONT_MONO   = cv2.FONT_HERSHEY_PLAIN
+
+
+def _fill(frame, color):
+    frame[:] = color
+
+
+def _rect(frame, x1, y1, x2, y2, color, thick=-1, radius=8):
+    """Rounded rectangle via corner circles + rects."""
+    if thick == -1:  # filled
+        cv2.rectangle(frame, (x1 + radius, y1), (x2 - radius, y2), color, -1)
+        cv2.rectangle(frame, (x1, y1 + radius), (x2, y2 - radius), color, -1)
+        for cx, cy in [(x1+radius, y1+radius), (x2-radius, y1+radius),
+                       (x1+radius, y2-radius), (x2-radius, y2-radius)]:
+            cv2.circle(frame, (cx, cy), radius, color, -1)
+    else:
+        cv2.rectangle(frame, (x1 + radius, y1), (x2 - radius, y1), color, thick)
+        cv2.rectangle(frame, (x1 + radius, y2), (x2 - radius, y2), color, thick)
+        cv2.rectangle(frame, (x1, y1 + radius), (x1, y2 - radius), color, thick)
+        cv2.rectangle(frame, (x2, y1 + radius), (x2, y2 - radius), color, thick)
+        for cx, cy in [(x1+radius, y1+radius), (x2-radius, y1+radius),
+                       (x1+radius, y2-radius), (x2-radius, y2-radius)]:
+            cv2.ellipse(frame, (cx, cy), (radius, radius), 0, 0, 0, color, thick)
+            cv2.ellipse(frame, (cx, cy), (radius, radius), 90, 0, 0, color, thick)
+            cv2.ellipse(frame, (cx, cy), (radius, radius), 180, 0, 0, color, thick)
+            cv2.ellipse(frame, (cx, cy), (radius, radius), 270, 0, 0, color, thick)
+
+
+def _text(frame, txt, x, y, scale, color, thick=1, font=None):
+    f = font or FONT
+    cv2.putText(frame, txt, (x, y), f, scale, color, thick, cv2.LINE_AA)
+
+
+def _text_centered(frame, txt, cy, scale, color, thick=1, font=None):
+    f = font or FONT
+    (w, _), _ = cv2.getTextSize(txt, f, scale, thick)
+    W = frame.shape[1]
+    _text(frame, txt, (W - w) // 2, cy, scale, color, thick, font=f)
+
+
+def _scanlines(frame, alpha=0.04):
+    """Subtle horizontal scanline texture."""
+    h, w = frame.shape[:2]
+    for y in range(0, h, 4):
+        cv2.line(frame, (0, y), (w, y), (0, 0, 0), 1)
+    overlay = frame.copy()
+    cv2.addWeighted(overlay, 1 - alpha, frame, alpha, 0, frame)
+
+
+def _grid_bg(frame):
+    """Faint perspective grid for depth."""
+    h, w = frame.shape[:2]
+    color = (30, 25, 42)
+    step = 40
+    for x in range(0, w, step):
+        cv2.line(frame, (x, 0), (x, h), color, 1)
+    for y in range(0, h, step):
+        cv2.line(frame, (0, y), (w, y), color, 1)
+
+
+def _glow_text(frame, txt, x, y, scale, color, thick=2):
+    """Text with a soft glow halo."""
+    dim = tuple(max(0, c // 4) for c in color)
+    for dx, dy in [(-1,-1),(1,-1),(-1,1),(1,1),(0,-2),(0,2),(-2,0),(2,0)]:
+        cv2.putText(frame, txt, (x+dx, y+dy), FONT, scale, dim, thick+1, cv2.LINE_AA)
+    cv2.putText(frame, txt, (x, y), FONT, scale, color, thick, cv2.LINE_AA)
+
+
+# ---------------------------------------------------------------------------
+# Button helper
+# ---------------------------------------------------------------------------
+
+class Button:
+    def __init__(self, x1, y1, x2, y2, label, value,
+                 color=ACCENT, disabled=False):
+        self.x1, self.y1, self.x2, self.y2 = x1, y1, x2, y2
+        self.label   = label
+        self.value   = value
+        self.color   = color
+        self.disabled = disabled
+        self._hover  = False
+
+    def contains(self, mx, my) -> bool:
+        return self.x1 <= mx <= self.x2 and self.y1 <= my <= self.y2
+
+    def set_hover(self, mx, my):
+        self._hover = self.contains(mx, my) and not self.disabled
+
+    def draw(self, frame):
+        if self.disabled:
+            bg = (40, 36, 52)
+            tc = TEXT_DIM
+        elif self._hover:
+            bg = tuple(min(255, c + 40) for c in self.color)
+            tc = BG
+        else:
+            bg = self.color
+            tc = BG if self._hover else TEXT_WHITE
+
+        _rect(frame, self.x1, self.y1, self.x2, self.y2, bg, -1)
+        _rect(frame, self.x1, self.y1, self.x2, self.y2,
+              tuple(min(255, c + 60) for c in bg), 1)
+
+        # Label
+        fs = 0.65
+        (tw, th), _ = cv2.getTextSize(self.label, FONT, fs, 1)
+        tx = self.x1 + (self.x2 - self.x1 - tw) // 2
+        ty = self.y1 + (self.y2 - self.y1 + th) // 2
+        cv2.putText(frame, self.label, (tx, ty), FONT, fs,
+                    BG if not self.disabled else TEXT_DIM, 1, cv2.LINE_AA)
+
+
+# ---------------------------------------------------------------------------
+# Main Menu
+# ---------------------------------------------------------------------------
+
+class MainMenu:
+    """
+    Renders the main menu.
+
+    Returns
+    -------
+    handle_event(event) → str | None
+        "play"  — user clicked Play
+        "debug" — user clicked Debug
+        "quit"  — user clicked Quit / pressed ESC
+    """
+
+    def __init__(self, W=640, H=480):
+        self.W, self.H = W, H
+        self._t0     = time.time()
+        self._mouse  = (0, 0)
+
+        bw, bh = 220, 52
+        cx = W // 2
+        self._buttons = [
+            Button(cx - bw//2, 200, cx + bw//2, 200+bh, "PLAY",   "play",  ACCENT),
+            Button(cx - bw//2, 268, cx + bw//2, 268+bh, "DEBUG",  "debug", (60, 140, 200)),
+            Button(cx - bw//2, 336, cx + bw//2, 336+bh, "QUIT",   "quit",  (80, 60, 160)),
+        ]
+
+    def handle_event(self, event_type: str, data=None) -> Optional[str]:
+        if event_type == "mouse_move":
+            self._mouse = data
+            for b in self._buttons:
+                b.set_hover(*data)
+        elif event_type == "mouse_click":
+            for b in self._buttons:
+                if b.contains(*data) and not b.disabled:
+                    return b.value
+        elif event_type == "key":
+            if data == 27:   # ESC
+                return "quit"
+        return None
+
+    def render(self) -> np.ndarray:
+        frame = np.zeros((self.H, self.W, 3), dtype=np.uint8)
+        frame[:] = BG
+        _grid_bg(frame)
+
+        t = time.time() - self._t0
+
+        # Animated accent bar top
+        bar_x = int((math.sin(t * 0.8) * 0.5 + 0.5) * self.W)
+        cv2.line(frame, (0, 2), (bar_x, 2), ACCENT, 3)
+        cv2.line(frame, (bar_x, 2), (self.W, 2), ACCENT2, 3)
+
+        # Logo area
+        _glow_text(frame, "SignSense",
+                   self.W // 2 - 130, 90, 1.8, ACCENT, 3)
+        _text_centered(frame, "ASL Learning System",
+                       128, 0.55, TEXT_DIM, 1)
+
+        # Animated pulse under logo
+        r = int(40 + 6 * math.sin(t * 2))
+        cv2.circle(frame, (self.W // 2, 145), r, (*ACCENT[:2], 80), 1)
+
+        # Version tag
+        _text(frame, "v0.4-alpha", 8, self.H - 12, 0.38, TEXT_DIM)
+
+        # Buttons
+        for b in self._buttons:
+            b.draw(frame)
+
+        _scanlines(frame)
+        return frame
+
+
+# ---------------------------------------------------------------------------
+# Level Select
+# ---------------------------------------------------------------------------
+
+LEVELS = [
+    {"id": "letters", "label": "Level 1 - Letters A-J",
+     "sub": "10 signs  •  static + dynamic", "enabled": True},
+    {"id": "numbers", "label": "Level 2 - Numbers 1-10",
+     "sub": "Coming soon", "enabled": False},
+]
+
+
+class LevelSelect:
+    """
+    Renders the level selection screen.
+
+    handle_event → "back" | level_id str | None
+    """
+
+    def __init__(self, W=640, H=480):
+        self.W, self.H = W, H
+        self._t0     = time.time()
+        self._mouse  = (0, 0)
+
+        bw, bh = 360, 64
+        cx = W // 2
+        self._buttons = []
+        for i, lv in enumerate(LEVELS):
+            y1 = 180 + i * 90
+            color = ACCENT if lv["enabled"] else (50, 45, 70)
+            self._buttons.append(
+                Button(cx - bw//2, y1, cx + bw//2, y1 + bh,
+                       lv["label"], lv["id"],
+                       color=color, disabled=not lv["enabled"])
+            )
+        # Back button
+        self._back = Button(20, self.H - 60, 130, self.H - 20,
+                            "← BACK", "back", (70, 60, 100))
+
+    def handle_event(self, event_type, data=None) -> Optional[str]:
+        if event_type == "mouse_move":
+            self._mouse = data
+            for b in self._buttons + [self._back]:
+                b.set_hover(*data)
+        elif event_type == "mouse_click":
+            if self._back.contains(*data):
+                return "back"
+            for b in self._buttons:
+                if b.contains(*data) and not b.disabled:
+                    return b.value
+        elif event_type == "key":
+            if data == 27:
+                return "back"
+        return None
+
+    def render(self) -> np.ndarray:
+        frame = np.zeros((self.H, self.W, 3), dtype=np.uint8)
+        frame[:] = BG
+        _grid_bg(frame)
+
+        t = time.time() - self._t0
+
+        # Top bar
+        cv2.rectangle(frame, (0, 0), (self.W, 50), PANEL, -1)
+        _glow_text(frame, "SELECT LEVEL", 20, 33, 0.9, ACCENT, 2)
+
+        # Sub-label
+        _text_centered(frame, "Choose your challenge", 90, 0.55, TEXT_DIM)
+
+        # Level buttons + sub-labels
+        for i, (btn, lv) in enumerate(zip(self._buttons, LEVELS)):
+            btn.draw(frame)
+            # Sub-label below button
+            sub_y = btn.y2 + 14
+            sc = TEXT_DIM if not lv["enabled"] else TEXT_WARN
+            _text_centered(frame, lv["sub"], sub_y, 0.40, sc)
+
+        self._back.draw(frame)
+
+        # Animated bottom accent
+        prog = (math.sin(t) * 0.5 + 0.5)
+        w2 = int(self.W * prog)
+        cv2.line(frame, (0, self.H - 3), (w2, self.H - 3), ACCENT2, 2)
+
+        _scanlines(frame)
+        return frame

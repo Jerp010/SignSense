@@ -1,175 +1,186 @@
-"""Dynamic ASL sign definitions for multi-state gesture recognition."""
+"""
+dynamic_signs.py
+================
+State-machine detectors for motion-based ASL signs.
 
-from typing import Dict, List, Any, Optional
+Each sign that requires movement (J, Z, …) gets a detector class that
+implements a simple update(landmarks, handedness) → bool interface.
+When update() returns True the sign has been completed.
+
+The play-mode loop calls the appropriate detector only when the current
+stage letter is dynamic, so there is no interference from other letters.
+"""
+
+from typing import Optional, Dict, Any, List
+import math
 
 
-class DynamicSignTracker:
-    """Tracks progression through a series of sign stages.
+# ---------------------------------------------------------------------------
+# Base class
+# ---------------------------------------------------------------------------
 
-    Each stage is governed by a check function that receives the
-    current landmarks, classifier_result, and the tracker itself (for
-    state storage). When a check returns True the tracker advances to
-    the next stage.  Users can query the current stage index and
-    description for UI feedback.
+class DynamicDetector:
+    """
+    Minimal interface every dynamic sign detector must implement.
+
+    update(landmarks, handedness) → bool
+        Call once per frame.  Returns True exactly once when the sign is
+        successfully completed, then auto-resets.
+
+    reset()
+        Force-reset all internal state (e.g. when play mode moves on).
+
+    stage_label → str
+        Human-readable description of what the detector is currently
+        waiting for (used for on-screen hints).
     """
 
-    def __init__(self, name: str, stage_descriptions: List[str], check_funcs: List[Any]):
-        self.name = name
-        self.stage_descriptions = stage_descriptions
-        self.check_funcs = check_funcs
-        self.current = 0
-        self._state_data: Dict[str, Any] = {}
+    @property
+    def stage_label(self) -> str:
+        return ""
 
-    def update(self, landmarks: Optional[List[Any]], classifier_result: Optional[Dict]) -> int:
-        """Call once per frame; returns the current stage index (0-based)."""
-        if self.current < len(self.check_funcs):
-            try:
-                if self.check_funcs[self.current](landmarks, classifier_result, self):
-                    self.current += 1
-            except Exception:
-                pass
-        return self.current
-
-    def is_complete(self) -> bool:
-        """Returns True when all stages have been passed."""
-        return self.current >= len(self.check_funcs)
+    def update(self, landmarks, handedness: Optional[str]) -> bool:
+        raise NotImplementedError
 
     def reset(self) -> None:
-        """Reset tracker to initial stage."""
-        self.current = 0
-        self._state_data.clear()
-
-    def stage_description(self) -> str:
-        if self.current < len(self.stage_descriptions):
-            return self.stage_descriptions[self.current]
-        return "(complete)"
+        raise NotImplementedError
 
 
-# --- J sign implementation -----------------------------------------------------------
+# ---------------------------------------------------------------------------
+# J  —  I handshape + pinky traces a J arc (down then hook up)
+# ---------------------------------------------------------------------------
 
-def _j_stage1(landmarks, classifier_result, tracker) -> bool:
-    """Stage 1: confirm the I handshape is held."""
-    return (
-        classifier_result is not None and
-        classifier_result.get("letter") == "I"
-    )
-
-
-def _j_stage2(landmarks, classifier_result, tracker) -> bool:
+class JDetector(DynamicDetector):
     """
-    Stage 2: detect the J hook — pinky tip drops then rises.
+    Detects ASL 'J'.
 
-    Tracks the raw pinky y position and looks for:
-      1. A downward excursion of at least DOWN_THRESHOLD from the starting y.
-      2. Followed by an upward recovery of at least UP_THRESHOLD from the peak.
+    Phases
+    ------
+    0  WAIT_I   : Wait for the hand to hold the I handshape (pinky up, others
+                  curled) for I_HOLD_FRAMES consecutive frames.
+    1  DOWN     : Track the pinky tip moving downward by at least
+                  DOWN_THRESHOLD * scale.
+    2  HOOK_UP  : After the descent, the pinky tip must rise by at least
+                  UP_THRESHOLD * scale to confirm the hook.
 
-    Uses tracker._state_data for persistence across frames.
+    On success returns True once, then resets automatically.
+    On timeout (too many frames in phase 1 or 2) resets without firing.
     """
-    if landmarks is None or len(landmarks) < 21:
+
+    I_HOLD_FRAMES  = 5     # frames of I shape before motion tracking starts
+    DOWN_THRESHOLD = 0.07  # fraction of hand-scale the pinky must drop
+    UP_THRESHOLD   = 0.04  # fraction of hand-scale the pinky must rise after drop
+    PHASE_TIMEOUT  = 50    # max frames per motion phase
+
+    _PHASE_LABELS = {
+        0: "Hold  I  shape (pinky up)",
+        1: "Move pinky DOWN",
+        2: "Hook pinky back UP",
+    }
+
+    def __init__(self) -> None:
+        self.reset()
+
+    # -- public interface ---------------------------------------------------
+
+    @property
+    def stage_label(self) -> str:
+        return self._PHASE_LABELS.get(self._phase, "")
+
+    def reset(self) -> None:
+        self._phase        = 0
+        self._i_count      = 0
+        self._phase_frames = 0
+        self._start_y      = 0.0
+        self._peak_y       = 0.0   # largest y seen (= lowest point on screen)
+
+    def update(self, landmarks, handedness: Optional[str]) -> bool:
+        if landmarks is None or len(landmarks) < 21:
+            self.reset()
+            return False
+
+        lm    = self._maybe_mirror(landmarks, handedness)
+        scale = math.hypot(lm[0].x - lm[9].x, lm[0].y - lm[9].y) or 0.15
+        py    = lm[20].y   # pinky tip y
+
+        in_i = self._is_i_shape(lm)
+
+        # ── phase 0 : wait for stable I hold ──────────────────────────────
+        if self._phase == 0:
+            self._i_count = self._i_count + 1 if in_i else 0
+            if self._i_count >= self.I_HOLD_FRAMES:
+                self._phase        = 1
+                self._phase_frames = 0
+                self._start_y      = py
+                self._peak_y       = py
+            return False
+
+        # ── phase 1 : pinky moves DOWN ────────────────────────────────────
+        if self._phase == 1:
+            self._phase_frames += 1
+            if py > self._peak_y:
+                self._peak_y = py          # track lowest point
+
+            if self._peak_y - self._start_y > self.DOWN_THRESHOLD * scale:
+                self._phase        = 2
+                self._phase_frames = 0
+                return False
+
+            if self._phase_frames > self.PHASE_TIMEOUT:
+                self.reset()
+            return False
+
+        # ── phase 2 : pinky hooks back UP ─────────────────────────────────
+        if self._phase == 2:
+            self._phase_frames += 1
+            up_travel = self._peak_y - py      # positive = rising
+
+            if up_travel > self.UP_THRESHOLD * scale:
+                self.reset()
+                return True                    # ✓ J detected
+
+            if self._phase_frames > self.PHASE_TIMEOUT:
+                self.reset()
+            return False
+
         return False
 
-    import math
-    pinky_y = landmarks[20].y
-    # Use hand scale for adaptive thresholds
-    scale   = math.hypot(landmarks[0].x - landmarks[9].x,
-                         landmarks[0].y - landmarks[9].y) or 0.15
+    # -- helpers ------------------------------------------------------------
 
-    data = tracker._state_data
+    @staticmethod
+    def _maybe_mirror(landmarks, handedness):
+        if handedness != "Right":
+            return landmarks
+        mirrored = []
+        for pt in landmarks:
+            m   = type(pt)()
+            m.x = 1.0 - pt.x
+            m.y = pt.y
+            m.z = getattr(pt, "z", 0)
+            mirrored.append(m)
+        return mirrored
 
-    # ── Initialise on first call into stage 2 ──────────────────────────────
-    if "j2_start_y" not in data:
-        data["j2_start_y"]   = pinky_y   # y when stage 2 first entered
-        data["j2_peak_y"]    = pinky_y   # lowest y reached (highest on screen)
-        data["j2_descended"] = False
-        data["j2_frames"]    = 0
-
-    data["j2_frames"] += 1
-
-    # Timeout — give up after ~60 frames (~2 s at 30 fps)
-    if data["j2_frames"] > 60:
-        # Reset stage-2 state so a fresh attempt can start
-        for k in list(data.keys()):
-            if k.startswith("j2_"):
-                del data[k]
-        return False
-
-    # Track the lowest point of the pinky (largest y = lowest on screen)
-    if pinky_y > data["j2_peak_y"]:
-        data["j2_peak_y"] = pinky_y
-
-    down_travel = data["j2_peak_y"] - data["j2_start_y"]
-
-    # Phase A: wait for sufficient downward travel
-    if not data["j2_descended"]:
-        if down_travel > 0.06 * scale:          # pinky moved down enough
-            data["j2_descended"] = True
-        return False
-
-    # Phase B: after descent, watch for the hook upward
-    up_travel = data["j2_peak_y"] - pinky_y    # positive = moving up from peak
-    if up_travel > 0.04 * scale:               # hook confirmed
-        return True
-
-    return False
+    @staticmethod
+    def _is_i_shape(lm) -> bool:
+        """True when pinky is up and index/middle/ring are all curled."""
+        pinky_up   = lm[20].y < lm[18].y   # tip above PIP
+        index_down = lm[8].y  > lm[6].y    # tip below PIP
+        mid_down   = lm[12].y > lm[10].y
+        ring_down  = lm[16].y > lm[14].y
+        return pinky_up and index_down and mid_down and ring_down
 
 
-def create_j_tracker() -> DynamicSignTracker:
-    """Factory returning a fresh tracker configured for the letter J."""
-    descs  = [s["description"] for s in DYNAMIC_SIGNS["J"]["states"]]
-    checks = [_j_stage1, _j_stage2]
-    return DynamicSignTracker("J", descs, checks)
+# ---------------------------------------------------------------------------
+# Registry  —  map letter → detector instance
+# ---------------------------------------------------------------------------
+# Import this dict in play_mode to get the right detector for each letter.
 
-
-# -------------------------------------------------------------------------------------
-
-DYNAMIC_SIGNS: Dict[str, Dict[str, Any]] = {
-    "HELLO": {
-        "description": "Wave greeting gesture",
-        "states": [
-            {"description": "Hand near forehead", "conditions": []},
-            {"description": "Hand away from forehead", "conditions": []},
-        ],
-    },
-    "THANK_YOU": {
-        "description": "Hand moving from chin forward",
-        "states": [
-            {"description": "Fingertips touching chin", "conditions": []},
-            {"description": "Hand extended forward", "conditions": []},
-        ],
-    },
-    "PLEASE": {
-        "description": "Circular motion with flat hand",
-        "states": [
-            {"description": "Flat hand at chest", "conditions": []},
-            {"description": "Circular motion", "conditions": []},
-        ],
-    },
-    "YES": {
-        "description": "Fist moving up and down",
-        "states": [
-            {"description": "Fist at lower position", "conditions": []},
-            {"description": "Fist at upper position", "conditions": []},
-        ],
-    },
-    "NO": {
-        "description": "Index and middle fingers snapping together",
-        "states": [
-            {"description": "Fingers extended apart", "conditions": []},
-            {"description": "Fingers snapped together", "conditions": []},
-        ],
-    },
-    "GOODBYE": {
-        "description": "Open hand waving side to side",
-        "states": [
-            {"description": "Hand at center", "conditions": []},
-            {"description": "Hand moved to side", "conditions": []},
-        ],
-    },
-    "J": {
-        "description": "Dynamic J motion starting from I handshape",
-        "states": [
-            {"description": "Hold I handshape (pinky up, others curled)"},
-            {"description": "Trace J: pinky down then hook up"},
-        ],
-    },
+DYNAMIC_DETECTORS: Dict[str, DynamicDetector] = {
+    "J": JDetector(),
+    # "Z": ZDetector(),   ← add here when implemented
 }
+
+
+def get_detector(letter: str) -> Optional[DynamicDetector]:
+    """Return the detector for a dynamic sign, or None if not registered."""
+    return DYNAMIC_DETECTORS.get(letter.upper())
