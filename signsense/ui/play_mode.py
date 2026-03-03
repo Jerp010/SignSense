@@ -371,7 +371,7 @@ class PlayModeRenderer:
         self._draw_sign_panel(frame, stage_tracker, classifier_result)
 
         # ── Full-width progress bar ─────────────────────────────────────────
-        self._draw_progress_bar(frame, stage_tracker)
+        self._draw_progress_bar(frame, stage_tracker, classifier_result)
 
 
         # ── Preview box (bottom right) ──────────────────────────────────────
@@ -496,7 +496,7 @@ class PlayModeRenderer:
             cv2.putText(frame, f"Seen: {det} {conf*100:.0f}%", 
                         (px + 6, py + ph - 10), FONT, 0.32, det_col, 1, cv2.LINE_AA)
 
-    def _draw_progress_bar(self, frame, tracker):
+    def _draw_progress_bar(self, frame, tracker, classifier_result):
         H, W = frame.shape[:2]
         bar_h = 12
         pad = 8
@@ -526,29 +526,6 @@ class PlayModeRenderer:
         (lw, _), _ = cv2.getTextSize(label, FONT, 0.32, 1)
         label_x = bar_x + (bar_w - lw) // 2
         cv2.putText(frame, label, (label_x, bar_y - 4), FONT, 0.32, DIM, 1, cv2.LINE_AA)
-
-        letters = list(scores.keys())
-        n       = len(letters)
-        if n == 0:
-            return
-        cell_w  = strip_w // n
-        bar_mh  = 18
-
-        for i, ltr in enumerate(letters):
-            s   = scores.get(ltr, 0.0)
-            bx  = strip_x + i * cell_w + 2
-            by  = strip_y + strip_h - 4
-            bh  = int(bar_mh * s)
-
-            is_target = (ltr == target)
-            col = GREEN if is_target and s >= 0.6 else (ACCENT if is_target else DIM)
-
-            if bh > 0:
-                cv2.rectangle(frame, (bx, by - bh), (bx + cell_w - 4, by), col, -1)
-
-            lc = WHITE if is_target else DIM
-            cv2.putText(frame, ltr, (bx + 1, strip_y + 12),
-                        FONT, 0.32, lc, 1, cv2.LINE_AA)
 
     def _draw_confirm_flash(self, frame, sign):
         if not sign:

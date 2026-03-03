@@ -73,7 +73,7 @@ def setup_logger(name: str = "SignSense") -> logging.Logger:
     file_handler = logging.FileHandler(LOG_FILE)
     file_handler.setLevel(logging.DEBUG)
     file_formatter = logging.Formatter(
-        '%(asctime)s | %(levelname)-8s | %(name)-20s | %(funcName)-20s | %(message)s',
+        '[%(asctime)s] %(levelname)-8s | %(name)-15s | %(funcName)-20s :: %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
     file_handler.setFormatter(file_formatter)
@@ -211,28 +211,28 @@ class PerformanceTracker:
         
     def report(self):
         """Generate a performance report."""
-        logger.info("=" * 70)
-        logger.info("PERFORMANCE REPORT")
-        logger.info("=" * 70)
+        logger.info("")
+        logger.info("[" + "="*68 + "]")
+        logger.info("|" + " "*24 + "PERFORMANCE REPORT" + " "*24 + "|")
+        logger.info("[" + "="*68 + "]")
         
         # Timing stats
         if self.timings:
-            logger.info("\nTiming Statistics:")
+            logger.info("[TIME] TIMING STATISTICS:")
             for op in sorted(self.timings.keys()):
                 stats = self.get_stats(op)
                 logger.info(
-                    f"  {op:30s} | Count: {stats['count']:3d} | "
-                    f"Avg: {stats['avg']:8.4f}s | "
-                    f"Min: {stats['min']:8.4f}s | Max: {stats['max']:8.4f}s"
+                    f"      {op:28s} | Calls: {stats['count']:4d} | "
+                    f"Avg: {stats['avg']:8.4f}s | Min: {stats['min']:8.4f}s | Max: {stats['max']:8.4f}s"
                 )
         
         # Error summary
         if self.errors:
-            logger.warning("\nErrors Encountered:")
+            logger.warning("\n[!] ERRORS ENCOUNTERED:")
             for op in sorted(self.errors.keys()):
-                logger.warning(f"  {op:30s} | Count: {self.errors[op]}")
+                logger.warning(f"      {op:28s} | Count: {self.errors[op]}")
         
-        logger.info("=" * 70)
+        logger.info("-"*70)
 
 
 # Global performance tracker
@@ -249,6 +249,9 @@ def log_init(module_name: str, details: str = ""):
     if details:
         msg += f" - {details}"
     logger.info(f"INIT: {msg}")
+    logger.debug(f"  [+] Module: {module_name}")
+    if details:
+        logger.debug(f"  [+] Details: {details}")
 
 
 def log_error(component: str, error: Exception, context: str = ""):
@@ -257,6 +260,10 @@ def log_error(component: str, error: Exception, context: str = ""):
     if context:
         msg += f" [{context}]"
     logger.error(msg)
+    logger.debug(f"  [X] Component: {component}")
+    logger.debug(f"  [X] Error Type: {type(error).__name__}")
+    if context:
+        logger.debug(f"  [X] Context: {context}")
 
 
 def log_success(message: str):
@@ -269,24 +276,36 @@ def log_warning(message: str):
     logger.warning(f"WARNING: {message}")
 
 
+def log_milestone(title: str, details: dict = None):
+    """Log a significant milestone with optional structured details."""
+    logger.info(f"{'='*70}")
+    logger.info(f"  ► {title}")
+    if details:
+        for key, value in details.items():
+            logger.info(f"    • {key}: {value}")
+    logger.info(f"{'='*70}")
+
+
 # ---------------------------------------------------------------------------
 # Session info
 # ---------------------------------------------------------------------------
 
 def log_session_start():
     """Log application startup information."""
-    logger.info("=" * 70)
-    logger.info("SIGNSENSE SESSION STARTED")
-    logger.info("=" * 70)
-    logger.info(f"Log file: {LOG_FILE}")
-    logger.info(f"Python: {sys.version}")
-    logger.info(f"Platform: {sys.platform}")
-    logger.info("=" * 70)
+    logger.info("")
+    logger.info("[" + "="*68 + "]")
+    logger.info("|" + " "*18 + "  SIGNSENSE SESSION STARTED  " + " "*18 + "|")
+    logger.info("[" + "="*68 + "]")
+    logger.info(f"[LOG] Log file: {LOG_FILE}")
+    logger.info(f"[SYS] Python: {sys.version.split()[0]}")
+    logger.info(f"[SYS] Platform: {sys.platform}")
+    logger.info("-"*70)
 
 
 def log_session_end():
     """Log application shutdown and generate report."""
-    logger.info("=" * 70)
-    logger.info("SIGNSENSE SESSION ENDED")
-    logger.info("=" * 70)
+    logger.info("")
+    logger.info("[" + "="*68 + "]")
+    logger.info("|" + " "*20 + "  SIGNSENSE SESSION ENDED  " + " "*19 + "|")
+    logger.info("[" + "="*68 + "]")
     perf_tracker.report()
