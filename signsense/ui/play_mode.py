@@ -373,10 +373,6 @@ class PlayModeRenderer:
         # ── Full-width progress bar ─────────────────────────────────────────
         self._draw_progress_bar(frame, stage_tracker)
 
-        # ── Score strip (bottom left, debug-lite) ──────────────────────────
-        if classifier_result and classifier_result.get("scores"):
-            self._draw_score_strip(frame, classifier_result["scores"],
-                                   sign.letter if sign else "")
 
         # ── Preview box (bottom right) ──────────────────────────────────────
         # Pass live frame dims so the box is always in the true bottom-right
@@ -416,6 +412,15 @@ class PlayModeRenderer:
         # Hand status dot
         dot_color = GREEN if hand_detected else RED_COL
         cv2.circle(frame, (W - 14, 34), 6, dot_color, -1)
+
+        # Stage completion dots
+        total = tracker.total_stages
+        cur = tracker.stage_num
+        for i in range(total):
+            color = ACCENT if i < cur - 1 else DIM
+            cx = 12 + i * 12
+            cy = 44
+            cv2.circle(frame, (cx, cy), 4, color, -1)
 
     def _draw_sign_panel(self, frame, tracker, classifier_result):
         H, W = frame.shape[:2]
@@ -475,7 +480,7 @@ class PlayModeRenderer:
             pct = int(tracker.progress * 100)
             hint = f"Hold...  {pct}%"
         elif state == "CONFIRMING":
-            hint = "SPACE → Next sign"
+            hint = "SPACE -> Next sign"
         else:
             hint = ""
 
@@ -522,22 +527,6 @@ class PlayModeRenderer:
         label_x = bar_x + (bar_w - lw) // 2
         cv2.putText(frame, label, (label_x, bar_y - 4), FONT, 0.32, DIM, 1, cv2.LINE_AA)
 
-    def _draw_score_strip(self, frame, scores: Dict, target: str):
-        H, W = frame.shape[:2]
-        # Sit just above the progress bar (which is 12px + 8px pad from bottom)
-        bar_total = 12 + 8          # bar_h + pad
-        strip_h   = 36
-        strip_x   = 8
-        strip_w   = W - strip_x * 2  # full width
-        strip_y   = H - bar_total - strip_h - 4
-
-        overlay = frame.copy()
-        cv2.rectangle(overlay, (strip_x, strip_y),
-                      (strip_x + strip_w, strip_y + strip_h),
-                      (14, 12, 22), -1)
-        cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
-
-        # One bar per active letter
         letters = list(scores.keys())
         n       = len(letters)
         if n == 0:
