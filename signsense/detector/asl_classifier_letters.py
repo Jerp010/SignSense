@@ -114,6 +114,24 @@ class FingerState:
     # On a mirrored-for-right-hand frame this reliably flags a sideways-extended thumb.
     thumb_side:       bool
 
+    # Extra helpers for M/N: which horizontal "slot" the thumb currently occupies.
+    # We compute these using a true 2‑D distance to the midpoints between the
+    # relevant MCPs.  Using only X caused instability when the hand tilts or
+    # rotates, since the thumb could be closer to the wrong slot in Euclidean
+    # space even though its X coordinate looked correct.  The scorers below now
+    # use these flags instead of recomputing their own x-only checks.
+    thumb_in_m_slot:  bool  # closer to middle↔pinky midpoint than middle↔ring
+    thumb_in_n_slot:  bool  # closer to middle↔ring midpoint than middle↔pinky
+
+    # New helpers added to assist with P orientation and thumb placement.
+    thumb_between_index_middle: bool  # tip sits between index and middle MCPs in x
+    index_forward:  bool  # finger tip closer to camera than MCP (z-based)
+    middle_forward: bool  # ditto for middle finger
+
+    # Orientation flag used across several scorers.  True when the wrist is
+    # clearly above the knuckles, indicating the hand is pointing downward.
+    wrist_above_knuckles: bool
+
     # The wrist-to-middle-MCP distance used to normalise all thresholds.
     scale:            float
 
@@ -195,6 +213,32 @@ class ASLClassifierLetters:
         def _side_ext(tip, mcp):
             return abs(tip.x - mcp.x) > 0.07 * scale
 
+        # Determine thumb slot occupancy using true 2‑D distances.  We
+        # compare the thumb tip against the midpoint of middle↔pinky MCPs (M
+        # slot) and the midpoint of middle↔ring MCPs (N slot).  The y component
+        # matters when the hand is tilted toward/away from the camera.
+        m_center_x = (lm[9].x + lm[17].x) / 2
+        m_center_y = (lm[9].y + lm[17].y) / 2
+        n_center_x = (lm[9].x + lm[13].x) / 2
+        n_center_y = (lm[9].y + lm[13].y) / 2
+        dist_to_m = math.hypot(lm[4].x - m_center_x, lm[4].y - m_center_y)
+        dist_to_n = math.hypot(lm[4].x - n_center_x, lm[4].y - n_center_y)
+        thumb_in_m_slot = dist_to_m < dist_to_n
+        thumb_in_n_slot = dist_to_n <= dist_to_m
+
+        # forward / camera-pointing for index & middle
+        index_forward = self._finger_points_at_camera(lm[8], lm[5])
+        middle_forward = self._finger_points_at_camera(lm[12], lm[9])
+
+        # thumb lies between the two forward fingers (used in K/P detection)
+        idx_x = lm[5].x
+        mid_x = lm[9].x
+        thumb_between_index_middle = (min(idx_x, mid_x) - 0.02) < lm[4].x < (max(idx_x, mid_x) + 0.02)
+
+        # orientation helper: wrist clearly above the two main knuckles
+        wrist_above_knuckles = (lm[0].y < lm[5].y - 0.08 and
+                                lm[0].y < lm[9].y - 0.08)
+
         return FingerState(
             # Extended = tip above PIP (tip.y < pip.y)
             index_ext        = self._is_extended(lm[8],  lm[6]),   # index tip vs index PIP
@@ -214,6 +258,16 @@ class ASLClassifierLetters:
 
             # Thumb extended sideways: tip is clearly to the left of thumb base
             thumb_side       = (lm[4].x < lm[2].x - 0.03),
+
+            # new M/N slot booleans
+            thumb_in_m_slot  = thumb_in_m_slot,
+            thumb_in_n_slot  = thumb_in_n_slot,
+
+            # additional helpers
+            thumb_between_index_middle = thumb_between_index_middle,
+            index_forward              = index_forward,
+            middle_forward             = middle_forward,
+            wrist_above_knuckles       = wrist_above_knuckles,
 
             scale            = scale,
         )
@@ -336,7 +390,9 @@ class ASLClassifierLetters:
         score += 0.20 * (self._count_deep_curled(fs) >= 3)
 
         # PENALTY: Thumb is tucked LOW (well below index MCP) -> E or M/N, not A.
-        score -= 0.50 * (lm[4].y > lm[5].y + 0.06)
+        score -= 0.70 * (lm[4].y > lm[5].y + 0.06)
+        # PENALTY: Thumb tucked beneath its own MCP (clear M/N) also kills A.
+        score -= 0.60 * (lm[4].y > lm[2].y + 0.02)
 
         # PENALTY: Thumb close to ANY fingertip -> might be M or N, not pure A.
         tips_near_thumb = sum(
@@ -557,12 +613,12 @@ class ASLClassifierLetters:
         # PENALTY: Thumb tip has curled BELOW its own MCP -> thumb is fully tucked
         # under the fist.  This is M/N/S behaviour, NOT E (claw where the thumb
         # reaches forward toward the fingertips from the side).
-        score -= 0.60 * (lm[4].y > lm[2].y + 0.03)
+        score -= 0.80 * (lm[4].y > lm[2].y + 0.03)
 
         # PENALTY: Thumb beside fist (high and close to index PIP) -> A.
         thumb_beside_fist = (lm[4].y > lm[8].y + 0.02 and
                              self._distance(lm[4], lm[6]) < 0.20 * scale)
-        score -= 0.25 * thumb_beside_fist
+        score -= 0.40 * thumb_beside_fist
 
         return max(0.0, min(1.0, score))
 
@@ -1012,10 +1068,10 @@ class ASLClassifierLetters:
         dist_to_n = abs(lm[4].x - n_center)
         thumb_nearest_n = dist_to_n < dist_to_m
 
-        score += 0.30 * thumb_nearest_n
+        score += 0.40 * thumb_nearest_n
 
         # Soft bonus: thumb x is on the index/middle side (before ring MCP).
-        score += 0.10 * (lm[4].x < lm[13].x + 0.01)
+        score += 0.15 * (lm[4].x < lm[13].x + 0.01)
 
         # ── PENALTIES ────────────────────────────────────────────────────────
         # Wrong x-slot → M.
@@ -1088,7 +1144,7 @@ class ASLClassifierLetters:
         score -= 0.50 * (self._distance(lm[4], lm[8]) > 0.28 * scale)
 
         # PENALTY: Thumb tucked under its own MCP -> M/N, not O.
-        score -= 0.50 * (lm[4].y > lm[2].y + 0.03)
+        score -= 0.60 * (lm[4].y > lm[2].y + 0.03)
 
         # PENALTY: Fingertips NOT near thumb -> C (open gap) or another sign.
         score -= 0.50 * (tips_near_thumb <= 1)
@@ -1141,39 +1197,45 @@ class ASLClassifierLetters:
         score += 0.25 * (lm[12].y > lm[9].y + 0.04 * scale)
 
         # POSITIVE: z-depth signals — fingers pointing at/toward camera.
-        score += 0.15 * idx_toward_cam
-        score += 0.15 * mid_toward_cam
+        score += 0.20 * idx_toward_cam
+        score += 0.20 * mid_toward_cam
+
+        # POSITIVE: wrist below MCPs (downward orientation) added earlier
+        score += 0.15 * (lm[5].y > lm[0].y and lm[9].y > lm[0].y)
+
+        # PENALTY: thumb closer to index tip than middle tip (off-center)
+        score -= 0.30 * (self._distance(lm[4], lm[8]) < self._distance(lm[4], lm[12]))
 
         # POSITIVE: Thumb between index and middle MCPs in x (same slot as K).
         idx_x = lm[5].x
         mid_x = lm[9].x
-        x_lo  = min(idx_x, mid_x) - 0.03
-        x_hi  = max(idx_x, mid_x) + 0.03
+        x_lo  = min(idx_x, mid_x) - 0.02
+        x_hi  = max(idx_x, mid_x) + 0.02
         thumb_between_x = x_lo < lm[4].x < x_hi
-        score += 0.25 * thumb_between_x
+        score += 0.35 * thumb_between_x
 
         # POSITIVE: Ring and pinky curled.
         score += 0.20 * (not fs.ring_ext and not fs.pinky_ext)
 
         # POSITIVE: Both tips clearly below MCPs (strong indicator of downward point).
         # This is the most important distinguisher from K.
-        both_below = (lm[8].y > lm[5].y + 0.03) and (lm[12].y > lm[9].y + 0.03)
-        score += 0.35 * both_below
+        both_below = (lm[8].y > lm[5].y + 0.04) and (lm[12].y > lm[9].y + 0.04)
+        score += 0.40 * both_below
 
         # PENALTY: Thumb not between fingers.
-        score -= 0.60 * (not thumb_between_x)
+        score -= 0.75 * (not thumb_between_x)
 
         # PENALTY: Both tips pointing UPWARD → K not P. This is critical distinction.
-        score -= 0.90 * (lm[8].y < lm[5].y - 0.03 and lm[12].y < lm[9].y - 0.03)
+        score -= 0.95 * (lm[8].y < lm[5].y - 0.04 and lm[12].y < lm[9].y - 0.04)
 
         # PENALTY: Extra fingers extended (ring or pinky up).
-        score -= 0.50 * (fs.ring_ext or fs.pinky_ext)
+        score -= 0.60 * (fs.ring_ext or fs.pinky_ext)
 
         # PENALTY: If index is not below its MCP, not pointing down.
-        score -= 0.40 * (lm[8].y <= lm[5].y)
+        score -= 0.50 * (lm[8].y <= lm[5].y)
 
         # PENALTY: If middle is not below its MCP, not pointing down.
-        score -= 0.40 * (lm[12].y <= lm[9].y)
+        score -= 0.50 * (lm[12].y <= lm[9].y)
 
         return max(0.0, min(1.0, score))
 
@@ -1260,8 +1322,8 @@ class ASLClassifierLetters:
             return None
 
         # Uncomment to print all scores every frame for debugging:
-        # print(f"{best} ({scores[best]:.2f}) | " +
-        #       " ".join(f"{k}:{v:.2f}" for k, v in sorted(scores.items())))
+        print(f"{best} ({scores[best]:.2f}) | " +
+              " ".join(f"{k}:{v:.2f}" for k, v in sorted(scores.items())))
 
         return {
             "letter":     best,

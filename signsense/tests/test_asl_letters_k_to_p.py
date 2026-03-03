@@ -310,6 +310,39 @@ def test_p_not_confused_with_k():
 # Cross-contamination: M and N must not beat each other's canonical poses
 # ---------------------------------------------------------------------------
 
+def test_m_not_confused_with_a():
+    """A is a closed fist; an M pose should NOT look like A."""
+    overrides = {
+        5:  (0.44, 0.55),  8:  (0.44, 0.72),
+        9:  (0.50, 0.55),  12: (0.50, 0.72),
+        13: (0.54, 0.56),  16: (0.54, 0.74),
+        17: (0.58, 0.57),  20: (0.58, 0.75),
+        2:  (0.52, 0.58),  4:  (0.54, 0.65),   # M slot
+    }
+    lm = make_landmarks(overrides)
+    clf = ASLClassifierLetters()
+    clf.min_confidence = 0.30
+    res = clf.classify(lm, handedness=None)
+    assert res is not None and res["letter"] == "M", \
+        f"M should outrank A on M pose, got {res}"
+
+def test_n_not_confused_with_e():
+    """An N pose should not be mis‑scored as E (claw)."""
+    overrides = {
+        5:  (0.44, 0.55),  8:  (0.44, 0.72),
+        9:  (0.50, 0.55),  12: (0.50, 0.72),
+        13: (0.54, 0.56),  16: (0.54, 0.74),
+        17: (0.58, 0.57),  20: (0.58, 0.75),
+        2:  (0.52, 0.58),  4:  (0.52, 0.66),   # N slot
+    }
+    lm = make_landmarks(overrides)
+    clf = ASLClassifierLetters()
+    clf.min_confidence = 0.30
+    res = clf.classify(lm, handedness=None)
+    assert res is not None and res["letter"] == "N", \
+        f"N should outrank E on N pose, got {res}"
+
+
 def test_m_beats_n_on_m_pose():
     """On the canonical M pose, M should outscore N in full competition mode."""
     overrides = {
