@@ -620,6 +620,17 @@ class ASLClassifierLetters:
                              self._distance(lm[4], lm[6]) < 0.20 * scale)
         score -= 0.40 * thumb_beside_fist
 
+        # PENALTY: If the fingertips cluster tightly around the thumb (O-like),
+        # penalise E strongly so O wins when circle geometry is present.
+        tips_very_close = sum(
+            1 for t in [lm[8], lm[12], lm[16], lm[20]]
+            if self._distance(t, lm[4]) < 0.20 * scale
+        )
+        score -= 0.60 * (tips_very_close >= 3)
+
+        # PENALTY: Thumb and index very close (top of an O) favors O/F, not E.
+        score -= 0.40 * (self._distance(lm[4], lm[8]) < 0.20 * scale)
+
         return max(0.0, min(1.0, score))
 
     def _score_f(self, lm, scale, fs):
@@ -788,12 +799,12 @@ class ASLClassifierLetters:
         score += 0.20 * both_level
 
         # POSITIVE: x-travel dominates y-travel on both fingers (sideways, not diagonal).
-        score += 0.10 * (ix > iy and mx > my)
+        score += 0.20 * (ix > iy and mx > my)
 
         # POSITIVE: Both fingers straight (not C-curved).
         # Vertex at PIP — straight = ~180°, curled = <155°.
-        score += 0.10 * (self._angle_3pts(lm[8],  lm[6],  lm[5]) > 155)
-        score += 0.10 * (self._angle_3pts(lm[12], lm[10], lm[9]) > 155)
+        score += 0.20 * (self._angle_3pts(lm[8],  lm[6],  lm[5]) > 155)
+        score += 0.20 * (self._angle_3pts(lm[12], lm[10], lm[9]) > 155)
 
         # POSITIVE: Ring and pinky are curled.
         score += 0.10 * (not fs.ring_ext and not fs.pinky_ext)
@@ -803,15 +814,15 @@ class ASLClassifierLetters:
         score -= 0.60 * both_up
 
         # PENALTY: C-shaped hooks on either finger.
-        score -= 0.25 * (self._angle_3pts(lm[8],  lm[6],  lm[5]) < 150)
-        score -= 0.25 * (self._angle_3pts(lm[12], lm[10], lm[9]) < 150)
+        score -= 0.45 * (self._angle_3pts(lm[8],  lm[6],  lm[5]) < 150)
+        score -= 0.45 * (self._angle_3pts(lm[12], lm[10], lm[9]) < 150)
 
         # PENALTY: Fingers spread far apart → V (peace sign), not tight H.
         score -= 0.30 * (abs(lm[8].x - lm[12].x) > 0.10)
 
         # PENALTY: Negligible x-travel on either finger → not actually sideways.
-        score -= 0.40 * (ix < 0.05 * scale)
-        score -= 0.40 * (mx < 0.05 * scale)
+        score -= 0.50 * (ix < 0.05 * scale)
+        score -= 0.50 * (mx < 0.05 * scale)
 
         return max(0.0, min(1.0, score))
 
@@ -1167,6 +1178,15 @@ class ASLClassifierLetters:
         vs G/H : G/H point sideways; P points downward or at camera
         """
         score = 0.0
+
+        # HARD GATE: If the thumb is tucked UNDER its own MCP *and* the
+        # thumb lies in the M or N slot this is M/N, not P.  Allow cases
+        # where the thumb sits between index & middle (K/P geometry) even
+        # if slightly below its MCP (some camera angles produce this).
+        # If thumb is tucked under but NOT sitting between index & middle
+        # (i.e. not the expected K/P slot) then this is likely M/N and not P.
+        if (lm[4].y > lm[2].y + 0.01) and (not fs.thumb_between_index_middle):
+            return 0.0
 
         # Compute tip-relative positions for index and middle.
         idx_tip_below_mcp = lm[8].y  > lm[5].y   # index tip lower than its MCP
