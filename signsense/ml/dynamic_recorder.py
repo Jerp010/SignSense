@@ -10,12 +10,12 @@ Usage:
   python -m ml.dynamic_recorder
 
 Controls:
-  - Press S (shift+s) to set the sign name (e.g., "J", "Z")
+  - Press A-Z to set the sign name instantly (e.g., press J for sign "J")
   - Press 0-9 to set the current STAGE (e.g., 0=Hold I, 1=Hook down, 2=Palm away)
   - While recording, every detected hand frame is saved with its stage label
   - SPACE: start/stop recording sequence for current stage
   - N: advance to next stage and start a new sequence
-  - S: save all sequences and exit
+  - Q: save all sequences and exit
   - ESC: exit without saving
 
 Output:
@@ -65,7 +65,7 @@ class DynamicSignRecorder:
     def _get_sign_dir(self) -> Path:
         """Get output directory for current sign."""
         if not self.sign_name:
-            raise ValueError("Sign name not set. Press 'S' to set sign name.")
+            raise ValueError("Sign name not set. Press A-Z to set sign name.")
         return self.output_base / self.sign_name
     
     def _ensure_sign_dir(self) -> None:
@@ -122,7 +122,7 @@ class DynamicSignRecorder:
             print(f"    Stage {stage}: {count} sequences")
     
     def set_sign_name(self, name: str) -> None:
-        """Set the sign name (called when user presses 'S')."""
+        """Set the sign name."""
         self.sign_name = name.upper()
         self.stage_sequences = {}
         self.current_stage = 0
@@ -146,7 +146,7 @@ class DynamicSignRecorder:
     def toggle_recording(self) -> None:
         """Start/stop recording current stage."""
         if not self.sign_name:
-            print("Error: Set sign name first (press 'S')")
+            print("Error: Set sign name first (press A-Z)")
             return
         
         self.is_recording = not self.is_recording
@@ -172,7 +172,7 @@ class DynamicSignRecorder:
 ============================================================
 DYNAMIC SIGN RECORDER
 ============================================================
-S: set sign name (e.g., J, Z)
+A-Z: set sign name to that letter
 0-9: set current stage
 SPACE: start/stop recording current stage
 N: move to next stage
@@ -186,8 +186,13 @@ ESC: exit without saving
             if not ret:
                 break
             
+            frame = cv2.flip(frame, 1)  # Mirror for selfie view
+            
             # Detect hand landmarks
-            frame, hand_landmarks, handedness = self.hand_tracker.track(frame)
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            hand_data = self.hand_tracker.process_frame(rgb)
+            hand_landmarks = hand_data["landmarks"] if hand_data else None
+            handedness = hand_data["handedness"] if hand_data else None
             
             # Record if active
             if self.is_recording and hand_landmarks:
@@ -197,7 +202,6 @@ ESC: exit without saving
             # Draw info
             h, w = frame.shape[:2]
             info_color = (0, 255, 0)
-            bg_color = (50, 50, 50)
             
             # Status box
             status = f"Sign: {self.sign_name or 'NOT SET'} | Stage: {self.current_stage} | Recording: {'YES' if self.is_recording else 'no'}"
@@ -230,14 +234,13 @@ ESC: exit without saving
             cv2.imshow("Dynamic Sign Recorder", frame)
             
             key = cv2.waitKey(1) & 0xFF
-            
-            if key == ord('s') or key == ord('S'):
-                # Prompt for sign name
-                print("\nEnter sign name (e.g., J, Z): ", end="", flush=True)
-                name = input().strip()
-                if name:
-                    self.set_sign_name(name)
-            
+
+            # A-Z (upper and lower) → set sign name instantly, no blocking input()
+            if 65 <= key <= 90:         # uppercase A-Z
+                self.set_sign_name(chr(key))
+            elif 97 <= key <= 122:      # lowercase a-z
+                self.set_sign_name(chr(key))
+
             elif ord('0') <= key <= ord('9'):
                 stage_num = int(chr(key))
                 self.set_stage(stage_num)
@@ -245,10 +248,10 @@ ESC: exit without saving
             elif key == ord(' '):
                 self.toggle_recording()
             
-            elif key == ord('n') or key == ord('N'):
+            elif key in (ord('n'), ord('N')):
                 self.set_stage(self.current_stage + 1)
             
-            elif key == ord('q') or key == ord('Q'):
+            elif key in (ord('q'), ord('Q')):
                 self._save_all_sequences()
                 break
             

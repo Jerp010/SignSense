@@ -229,9 +229,10 @@ python -m ml.record_landmarks
 - Creates separate files for each letter
 
 **Key options during recording:**
-- Press `c` to start/stop capturing for current letter
-- Press `n` to move to next letter
-- Press `q` to quit
+- Press letter key (A-Z) to set the active label
+- While label is active, every detected hand frame is recorded
+- Press `]` to save and exit
+- Press `ESC` to exit without saving
 
 **Output:** `.npy` files in `ml/data/` containing numpy arrays of normalized landmarks
 

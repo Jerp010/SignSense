@@ -9,7 +9,7 @@ Usage:
 Controls:
   - Press A-Z to set the active label (shown on-screen)
   - While label is active, every detected hand frame is recorded
-  - S: save and exit
+  - ]: save and exit
   - ESC: exit without saving
 
 Output:
@@ -125,7 +125,7 @@ class LandmarkRecorder:
         print("=" * 60)
         print("Press letter key (A-Z) to set label")
         print("While active, every detected hand frame is recorded")
-        print("S: save and exit")
+        print("]: save and exit")
         print("ESC: exit without saving")
         print("=" * 60 + "\n")
         
@@ -200,7 +200,7 @@ class LandmarkRecorder:
                 if key == 27:  # ESC
                     print("\nExit without saving.")
                     break
-                elif key == ord("s") or key == ord("S"):  # S
+                elif key == ord(']'):  # ]
                     self._save_and_exit()
                     break
                 elif 65 <= key <= 90 or 97 <= key <= 122:  # A-Z (uppercase) or a-z (lowercase)
