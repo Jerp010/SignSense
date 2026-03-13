@@ -205,3 +205,4 @@ class ASLClassifierLetters:
             )
             mirrored.append(n)
         return mirrored
+        

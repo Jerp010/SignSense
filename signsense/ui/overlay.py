@@ -17,7 +17,7 @@ HAND_CONNECTIONS = [
 
 # Active letters in A-H scope (used for score bar display)
 # 'I' and 'J' are included for debugging/expansion
-ACTIVE_LETTERS = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"]
+ACTIVE_LETTERS = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y"]
 
 
 class SignHoldTimer:
