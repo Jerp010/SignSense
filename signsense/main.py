@@ -25,6 +25,12 @@ Transitions
 """
 
 import sys
+import concurrent.futures
+import threading
+from pathlib import Path
+
+# Add current directory to Python path for imports
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 # ensure logging subsystem is initialised immediately
 # bring in the logger *instance* plus helper functions
@@ -60,6 +66,59 @@ from ui.overlay                      import Overlay, SignHoldTimer
 from ui.menu                         import MainMenu, LevelSelect
 from ui.play_mode                    import PlayModeRenderer, StageTracker
 from signs.sign_registry             import ACTIVE_SIGNS, SignType
+
+# Global detector cache for model reuse
+_detector_cache = {
+    'hand_tracker': None,
+    'face_tracker': None,
+    'classifier': None
+}
+
+def get_cached_hand_tracker():
+    if _detector_cache['hand_tracker'] is None:
+        _detector_cache['hand_tracker'] = HandTracker(0.6, 0.6, 1)
+    return _detector_cache['hand_tracker']
+
+def get_cached_face_tracker():
+    if _detector_cache['face_tracker'] is None:
+        _detector_cache['face_tracker'] = FaceTracker()
+    return _detector_cache['face_tracker']
+
+def get_cached_classifier():
+    if _detector_cache['classifier'] is None:
+        _detector_cache['classifier'] = ASLClassifierLetters()
+    return _detector_cache['classifier']
+
+def initialize_detectors():
+    """Initialize all detectors in parallel."""
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+        hand_future = executor.submit(get_cached_hand_tracker)
+        face_future = executor.submit(get_cached_face_tracker)
+        classifier_future = executor.submit(get_cached_classifier)
+        
+        hand_tracker = hand_future.result()
+        face_tracker = face_future.result()
+        classifier = classifier_future.result()
+        
+    return hand_tracker, face_tracker, classifier
+
+def open_camera(W=640, H=480):
+    """Open camera with synchronous fallback for reliability."""
+    logger.debug(f"Attempting to open camera with resolution {W}x{H}")
+    cap = cv2.VideoCapture(0)
+    
+    if not cap.isOpened():
+        logger.error("Camera not accessible")
+        return None
+        
+    # Configure camera properties
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, W)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, H)
+    cap.set(cv2.CAP_PROP_FPS, 60)
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    
+    logger.debug("Camera opened successfully")
+    return cap
 
 
 # ---------------------------------------------------------------------------
@@ -207,30 +266,27 @@ def run_play_mode(level_id: str, W=640, H=480) -> str:
     mode_entry = time.perf_counter()
     log_init("Play mode", f"level={level_id}")
 
+    # Initialize detectors first (parallel)
+    with TimingContext("Initialize play mode detectors and components"):
+        hand_tracker, face_tracker, classifier = initialize_detectors()
+        smoother = PredictionSmoother(buffer_size=5, min_confidence=3)
+        signs_for_level = ACTIVE_SIGNS   # currently only one level
+        stage_tracker = StageTracker(signs_for_level)
+        renderer = PlayModeRenderer(W, H)
+    
+    # Open camera synchronously (more reliable)
     cam_start_time = time.perf_counter()
     cap = open_camera(W, H)
     cam_delay = time.perf_counter() - cam_start_time
-    if cap is None:
+    
+    if cap is None or not cap.isOpened():
         log_error("Play mode", RuntimeError("camera open failed"))
         return "menu"
+        
     total_startup = time.perf_counter() - mode_entry
     log_success(
         f"Open camera {W}x{H} | delay={cam_delay:.4f}s | startup={total_startup:.4f}s"
     )
-
-    # Build stage list from registry
-    signs_for_level = ACTIVE_SIGNS   # currently only one level
-
-    # initialize detectors/components together so we can time the entire step
-    with TimingContext("Initialize play mode detectors and components"):
-        hand_tracker  = HandTracker(min_detection_confidence=0.6,
-                                    min_tracking_confidence=0.6,
-                                    max_num_hands=1)
-        face_tracker  = FaceTracker()
-        classifier    = ASLClassifierLetters()
-        smoother      = PredictionSmoother(buffer_size=5, min_confidence=3)
-        stage_tracker = StageTracker(signs_for_level)
-        renderer      = PlayModeRenderer(W, H)
     log_success(f"Play mode initialized with {len(signs_for_level)} signs")
 
     WIN = "SignSense"
@@ -367,27 +423,27 @@ def run_debug_mode(W=640, H=480) -> str:
     """Returns 'menu' when ESC pressed."""
     mode_entry = time.perf_counter()
     log_init("Debug mode")
+    
+    # Initialize detectors first (parallel)
+    with TimingContext("Initialize debug mode components"):
+        hand_tracker, face_tracker, classifier = initialize_detectors()
+        smoother = PredictionSmoother(buffer_size=5, min_confidence=3)
+        overlay = Overlay(window_title="SignSense - Debug")
+        hold_timer = SignHoldTimer(hold_duration=1.5)
+    
+    # Open camera synchronously (more reliable)
     cam_start_time = time.perf_counter()
     cap = open_camera(W, H)
     cam_delay = time.perf_counter() - cam_start_time
-    if cap is None:
+    
+    if cap is None or not cap.isOpened():
         log_error("Debug mode", RuntimeError("camera open failed"))
         return "menu"
+        
     total_startup = time.perf_counter() - mode_entry
     log_success(
         f"Open camera {W}x{H} | delay={cam_delay:.4f}s | startup={total_startup:.4f}s"
     )
-
-    # time the initialization of debug components
-    with TimingContext("Initialize debug mode components"):
-        hand_tracker = HandTracker(min_detection_confidence=0.6,
-                                   min_tracking_confidence=0.6,
-                                   max_num_hands=1)
-        face_tracker  = FaceTracker()
-        classifier    = ASLClassifierLetters()
-        smoother      = PredictionSmoother(buffer_size=5, min_confidence=3)
-        overlay       = Overlay(window_title="SignSense - Debug")
-        hold_timer    = SignHoldTimer(hold_duration=1.5)
     log_success("Debug mode components initialized")
 
     WIN = "SignSense"

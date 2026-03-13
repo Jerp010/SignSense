@@ -2,10 +2,20 @@
 dynamic_signs.py
 ================
 State-machine detectors for motion-based ASL signs.
+
+Uses configuration from config/dynamic_signs.yaml for flexible
+parameterization of detectors without modifying code.
 """
 
 from typing import Optional, Dict
 import math
+
+# Import configuration system - adjust path for module resolution
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+
+from signsense.config.dynamic_config import get_config, SignConfig
 
 
 class DynamicDetector:
@@ -26,39 +36,31 @@ class DynamicDetector:
 
 class JDetector(DynamicDetector):
     """
-    Detects ASL 'J' in three sequential phases:
+    Detects ASL 'J' in three sequential phases using configuration from YAML.
 
     Phase 0 — HOLD I
-        Hold the I handshape (pinky up, others curled) for
-        I_HOLD_FRAMES frames. Starting position for J.
+        Hold the I handshape (pinky up, others curled) for configured frames.
 
     Phase 1 — HOOK DOWN
-        Move the pinky tip downward by DOWN_THRESHOLD * scale.
-        The curved downward stroke of the J.
+        Move the pinky tip downward by configured distance relative to scale.
 
     Phase 2 — FINISH: PALM AWAY + I HOLD
         Rotate so the back of the palm faces the camera, then
-        re-hold the I shape for FINISH_HOLD_FRAMES frames.
+        re-hold the I shape for configured frames.
     """
 
-    I_HOLD_FRAMES      = 6     # ~0.2s at 30fps
-    DOWN_THRESHOLD     = 0.06  # 6% of hand scale
-    FINISH_HOLD_FRAMES = 8     # ~0.27s
-    PHASE_TIMEOUT      = 70    # ~2.3s before auto-reset
-
-    _PHASE_LABELS = {
-        0: "Step 1/3 — Hold  I  (pinky up)",
-        1: "Step 2/3 — Hook pinky DOWN",
-        2: "Step 3/3 — Palm away, hold  I",
-    }
-
     def __init__(self) -> None:
+        self._config = get_config("J")
+        if self._config is None:
+            raise ValueError("Configuration for sign 'J' not found in dynamic_signs.yaml")
+        
         self._phase_complete = False
         self.reset()
 
     @property
     def stage_label(self) -> str:
-        return self._PHASE_LABELS.get(self._phase, "")
+        """Get stage label from configuration or fallback to default."""
+        return self._config.stages.get(self._phase, f"Stage {self._phase}")
 
     @property
     def phase_complete(self) -> bool:
@@ -66,6 +68,7 @@ class JDetector(DynamicDetector):
         return self._phase_complete
 
     def reset(self) -> None:
+        """Reset detector to initial state."""
         self._phase          = 0
         self._i_count        = 0
         self._phase_frames   = 0
@@ -75,6 +78,7 @@ class JDetector(DynamicDetector):
         self._phase_complete = False
 
     def update(self, landmarks, handedness: Optional[str]) -> bool:
+        """Update detector state with current landmarks and handedness."""
         self._phase_complete = False   # clear every frame
 
         if landmarks is None or len(landmarks) < 21:
@@ -92,7 +96,7 @@ class JDetector(DynamicDetector):
         # ── Phase 0: hold I shape ─────────────────────────────────────────
         if self._phase == 0:
             self._i_count = self._i_count + 1 if in_i else 0
-            if self._i_count >= self.I_HOLD_FRAMES:
+            if self._i_count >= self._config.detector.i_hold_frames:
                 self._phase          = 1
                 self._phase_frames   = 0
                 self._start_y        = py
@@ -106,14 +110,14 @@ class JDetector(DynamicDetector):
             if py > self._peak_y:
                 self._peak_y = py
 
-            if self._peak_y - self._start_y > self.DOWN_THRESHOLD * scale:
+            if self._peak_y - self._start_y > self._config.detector.down_threshold * scale:
                 self._phase          = 2
                 self._phase_frames   = 0
                 self._finish_count   = 0
                 self._phase_complete = True   # ✓ Step 2 done
                 return False
 
-            if self._phase_frames > self.PHASE_TIMEOUT:
+            if self._phase_frames > self._config.detector.phase_timeout:
                 self.reset()
             return False
 
@@ -127,11 +131,11 @@ class JDetector(DynamicDetector):
                 # Forgive a few bad frames rather than hard-resetting
                 self._finish_count = max(0, self._finish_count - 1)
 
-            if self._finish_count >= self.FINISH_HOLD_FRAMES:
+            if self._finish_count >= self._config.detector.finish_hold_frames:
                 self.reset()
                 return True    # ✓ J complete
 
-            if self._phase_frames > self.PHASE_TIMEOUT:
+            if self._phase_frames > self._config.detector.phase_timeout:
                 self.reset()
             return False
 

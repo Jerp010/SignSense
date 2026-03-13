@@ -44,6 +44,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from signsense.detector.hand_tracker import HandTracker
 from signsense.ml.model import LandmarkNormaliser
+from signsense.config.dynamic_config import get_config, get_all_sign_names, SignConfig
 
 
 class DynamicSignRecorder:
@@ -57,6 +58,7 @@ class DynamicSignRecorder:
         self.hand_tracker = HandTracker()
         
         self.sign_name: Optional[str] = None
+        self.sign_config: Optional[SignConfig] = None
         self.current_stage: int = 0
         self.is_recording = False
         self.current_sequence: List[np.ndarray] = []
@@ -124,9 +126,15 @@ class DynamicSignRecorder:
     def set_sign_name(self, name: str) -> None:
         """Set the sign name (called when user presses 'S')."""
         self.sign_name = name.upper()
+        self.sign_config = get_config(self.sign_name)
         self.stage_sequences = {}
         self.current_stage = 0
+        
         print(f"Sign set to: {self.sign_name}")
+        if self.sign_config:
+            print(f"Stages defined: {list(self.sign_config.stages.values())}")
+        else:
+            print(f"Warning: No configuration found for sign '{self.sign_name}'")
         print(f"Current stage: {self.current_stage}")
     
     def set_stage(self, stage_num: int) -> None:
@@ -141,7 +149,11 @@ class DynamicSignRecorder:
         
         self.current_stage = stage_num
         self.is_recording = False
-        print(f"Stage set to: {self.current_stage}")
+        
+        if self.sign_config and self.current_stage in self.sign_config.stages:
+            print(f"Stage set to: {self.current_stage} - {self.sign_config.stages[self.current_stage]}")
+        else:
+            print(f"Stage set to: {self.current_stage}")
     
     def toggle_recording(self) -> None:
         """Start/stop recording current stage."""

@@ -43,9 +43,9 @@ import torch
 import numpy as np
 
 # Add parent to path for imports
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from signsense.ml.model import load_model
+from ml.model import load_model
 
 
 class ASLClassifierLetters:

@@ -18,10 +18,12 @@ from pathlib import Path
 import torch
 import numpy as np
 
+# Add parent to path for imports
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from signsense.ml.dynamic_model import load_dynamic_model
+from signsense.config.dynamic_config import get_config, SignConfig
 
 
 class TrainedDynamicDetector:
@@ -30,9 +32,8 @@ class TrainedDynamicDetector:
     
     Tracks hand landmarks through a sequence, predicts current stage,
     and detects when a sign is complete.
+    Uses configuration from config/dynamic_signs.yaml.
     """
-    
-    STAGE_TIMEOUT = 120  # Max frames per stage before reset
     
     def __init__(self, sign_name: str, model_dir: str = "ml/models"):
         """
@@ -43,10 +44,15 @@ class TrainedDynamicDetector:
         self.sign_name = sign_name.upper()
         self.model_dir = Path(model_dir)
         
+        # Load configuration
+        self._config = get_config(self.sign_name)
+        if self._config is None:
+            raise ValueError(f"Configuration for sign '{self.sign_name}' not found in dynamic_signs.yaml")
+        
         self._model = None
         self._normaliser = None
         self._num_stages = 0
-        self._stage_names = {}
+        self._stage_names = self._config.stages
         self._device = "cpu"
         
         self._phase_complete = False
@@ -183,7 +189,7 @@ class TrainedDynamicDetector:
         self._stage_frames += 1
         
         # Timeout if stuck in stage too long
-        if self._stage_frames > self.STAGE_TIMEOUT:
+        if self._stage_frames > self._config.detector.phase_timeout:
             print(f"[{self.sign_name}] Stage timeout - resetting")
             self.reset()
             return False

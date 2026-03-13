@@ -18,7 +18,7 @@ sign_type   : SignType     — STATIC (single frame) or DYNAMIC (motion)
 description : str          — one-line hint shown to the user
 preview_count : int        — how many preview images exist (pages in the box)
 preview_dir : str          — path relative to project root for preview assets
-enabled     : bool         — False = not yet implemented, skipped in play mode
+enabled     : bool         — True = not yet implemented, skipped in play mode
 """
 
 from dataclasses import dataclass, field
@@ -61,16 +61,16 @@ SIGN_REGISTRY: List[SignEntry] = [
     SignEntry("N", SignType.STATIC,  "Two fingers over tucked thumb",     enabled=True),
     SignEntry("O", SignType.STATIC,  "All fingers circle to thumb",       enabled=True),
     SignEntry("P", SignType.STATIC,  "Like K but pointing down",          enabled=True),
-        # --- not yet implemented — will be skipped in play mode ---
-    SignEntry("Q", SignType.STATIC,  "Like G but pointing down",          enabled=False),
-    SignEntry("R", SignType.STATIC,  "Index + middle crossed",            enabled=False),
-    SignEntry("S", SignType.STATIC,  "Fist with thumb over fingers",      enabled=False),
-    SignEntry("T", SignType.STATIC,  "Thumb between index + middle",      enabled=False),
-    SignEntry("U", SignType.STATIC,  "Index + middle up together",        enabled=False),
-    SignEntry("V", SignType.STATIC,  "Index + middle up spread (peace)",  enabled=False),
-    SignEntry("W", SignType.STATIC,  "Three fingers up spread",           enabled=False),
-    SignEntry("X", SignType.STATIC,  "Index finger hooked",               enabled=False),
-    SignEntry("Y", SignType.STATIC,  "Thumb + pinky out",                 enabled=False),
+    SignEntry("Q", SignType.STATIC,  "Like G but pointing down",          enabled=True),
+    SignEntry("R", SignType.STATIC,  "Index + middle crossed",            enabled=True),
+    SignEntry("S", SignType.STATIC,  "Fist with thumb over fingers",      enabled=True),
+    SignEntry("T", SignType.STATIC,  "Thumb between index + middle",      enabled=True),
+    SignEntry("U", SignType.STATIC,  "Index + middle up together",        enabled=True),
+    SignEntry("V", SignType.STATIC,  "Index + middle up spread (peace)",  enabled=True),
+    SignEntry("W", SignType.STATIC,  "Three fingers up spread",           enabled=True),
+    SignEntry("X", SignType.STATIC,  "Index finger hooked",               enabled=True),
+    SignEntry("Y", SignType.STATIC,  "Thumb + pinky out",                 enabled=True),
+            # --- not yet implemented — will be skipped in play mode ---
     SignEntry("Z", SignType.DYNAMIC, "Index traces a Z in the air",       enabled=False),
 ]
 

@@ -22,8 +22,7 @@ from typing import Optional, Any, Callable
 LOG_DIR = Path(__file__).parent.parent.parent / "logs"
 LOG_DIR.mkdir(exist_ok=True)
 
-TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
-LOG_FILE = LOG_DIR / f"signsense_{TIMESTAMP}.log"
+LOG_FILE = None
 
 
 # ---------------------------------------------------------------------------
@@ -49,7 +48,7 @@ class ColoredFormatter(logging.Formatter):
         return super().format(record)
 
 
-def setup_logger(name: str = "SignSense") -> logging.Logger:
+def setup_logger(name: str = "SignSense", log_file: Optional[Path] = None) -> logging.Logger:
     """
     Initialize the logger with both file and console handlers.
     
@@ -57,6 +56,8 @@ def setup_logger(name: str = "SignSense") -> logging.Logger:
     ----------
     name : str
         Logger name
+    log_file : Path, optional
+        Path to log file, creates new file with timestamp if None
         
     Returns
     -------
@@ -70,7 +71,11 @@ def setup_logger(name: str = "SignSense") -> logging.Logger:
     logger.handlers.clear()
     
     # File handler (always log everything)
-    file_handler = logging.FileHandler(LOG_FILE)
+    if log_file is None:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_file = LOG_DIR / f"signsense_{timestamp}.log"
+    
+    file_handler = logging.FileHandler(log_file)
     file_handler.setLevel(logging.DEBUG)
     file_formatter = logging.Formatter(
         '[%(asctime)s] %(levelname)-8s | %(name)-15s | %(funcName)-20s :: %(message)s',
@@ -92,8 +97,8 @@ def setup_logger(name: str = "SignSense") -> logging.Logger:
     return logger
 
 
-# Global logger instance
-logger = setup_logger()
+# Global logger instance (initialized with console output only)
+logger = setup_logger(log_file=None)
 
 
 # ---------------------------------------------------------------------------
@@ -291,7 +296,15 @@ def log_milestone(title: str, details: dict = None):
 # ---------------------------------------------------------------------------
 
 def log_session_start():
-    """Log application startup information."""
+    """Log application startup information and initialize file logger."""
+    global LOG_FILE
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    LOG_FILE = LOG_DIR / f"signsense_{timestamp}.log"
+    
+    # Reconfigure logger with file handler
+    global logger
+    logger = setup_logger(log_file=LOG_FILE)
+    
     logger.info("")
     logger.info("[" + "="*68 + "]")
     logger.info("|" + " "*18 + "  SIGNSENSE SESSION STARTED  " + " "*18 + "|")

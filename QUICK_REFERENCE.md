@@ -135,7 +135,7 @@ Output (stage logits + transition confidence)
 
 ```bash
 # Record static signs
-python -m ml.record_landmarks
+python -m signsense.ml.record_landmarks
 
 # Train static signs
 python -m ml.train

@@ -28,6 +28,10 @@ from datetime import datetime
 
 import numpy as np
 import torch
+
+# Import configuration system
+sys.path.append(str(Path(__file__).parent.parent.parent))
+from signsense.config.dynamic_config import get_config, get_all_sign_names, SignConfig
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader, random_split
@@ -138,12 +142,17 @@ def load_sign_sequences(sign_dir: Path) -> tuple:
 
 def train_dynamic_sign(sign_name: str, data_dir: str = "ml/data/dynamic", 
                       output_dir: str = "ml/models"):
-    """Train LSTM model for a dynamic sign."""
+    """Train LSTM model for a dynamic sign using configuration."""
     
     sign_name = sign_name.upper()
     data_path = Path(data_dir) / sign_name
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
+    
+    # Load configuration
+    config = get_config(sign_name)
+    if config is None:
+        raise ValueError(f"Configuration for sign '{sign_name}' not found in dynamic_signs.yaml")
     
     print(f"\n{'='*60}")
     print(f"Training Dynamic Sign: {sign_name}")
@@ -157,8 +166,10 @@ def train_dynamic_sign(sign_name: str, data_dir: str = "ml/data/dynamic",
         print(f"Error: Need at least 2 sequences, got {len(sequences)}")
         return
     
-    # Find max sequence length
+    # Find max sequence length (use config or actual max)
     max_len = max(len(seq) for seq in sequences)
+    if config.training.sequence_length > max_len:
+        max_len = config.training.sequence_length
     print(f"Max sequence length: {max_len} frames")
     
     # Create dataset
@@ -169,8 +180,8 @@ def train_dynamic_sign(sign_name: str, data_dir: str = "ml/data/dynamic",
     val_size = len(dataset) - train_size
     train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
     
-    train_loader = DataLoader(train_dataset, batch_size=4, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=4, shuffle=False)
+    train_loader = DataLoader(train_dataset, batch_size=config.training.batch_size, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=config.training.batch_size, shuffle=False)
     
     print(f"Train: {len(train_dataset)}, Val: {len(val_dataset)}")
     
@@ -178,12 +189,12 @@ def train_dynamic_sign(sign_name: str, data_dir: str = "ml/data/dynamic",
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Device: {device}")
     
-    model = DynamicSignLSTM(num_stages, input_size=63, hidden_size=128)
+    model = DynamicSignLSTM(num_stages, input_size=63, hidden_size=config.training.hidden_size)
     model.to(device)
     
-    optimizer = optim.Adam(model.parameters(), lr=0.001)
+    optimizer = optim.Adam(model.parameters(), lr=config.training.learning_rate)
     criterion = nn.CrossEntropyLoss(ignore_index=-1)  # Ignore padded frames
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=50)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.training.epochs)
     
     # Training loop
     best_val_acc = 0
@@ -194,7 +205,7 @@ def train_dynamic_sign(sign_name: str, data_dir: str = "ml/data/dynamic",
     val_accs = []
     
     print("\nTraining...")
-    for epoch in range(100):
+    for epoch in range(config.training.epochs):
         # Training
         model.train()
         train_loss = 0

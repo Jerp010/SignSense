@@ -6,7 +6,7 @@ OpenCV-drawn menus for SignSense.
 States
 ------
   MAIN_MENU       → show Play / Debug / Quit
-  LEVEL_SELECT    → show available levels (Letters A-J, Numbers coming soon)
+  LEVEL_SELECT    → show available levels 
 
 All menus are rendered purely with cv2 — no camera required.
 Each render() call returns the frame to display.
@@ -217,7 +217,7 @@ class MainMenu:
         cv2.circle(frame, (self.W // 2, 145), r, (*ACCENT[:2], 80), 1)
 
         # Version tag
-        _text(frame, "v0.4-alpha", 8, self.H - 12, 0.38, TEXT_DIM)
+        _text(frame, "v0.7-alpha", 8, self.H - 12, 0.38, TEXT_DIM)
 
         # Buttons
         for b in self._buttons:
