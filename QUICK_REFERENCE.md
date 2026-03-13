@@ -1,16 +1,47 @@
 # SignSense Quick Reference
 
+## Getting Started
+
+### Virtual Environment
+The project uses a dedicated virtual environment located at **`signsense/.venv`** with all required dependencies installed.
+
+```bash
+# Activate the virtual environment (Windows)
+cd signsense
+.venv\Scripts\activate
+
+# Activate the virtual environment (Linux/macOS)
+cd signsense
+source .venv/bin/activate
+
+# Verify installation
+python --version  # Should be Python 3.9-3.12
+pip list          # Should include all dependencies from requirements.txt
+```
+
+### Dependencies
+All required packages are listed in **`signsense/requirements.txt`** and pre-installed in the virtual environment:
+- `mediapipe>=0.10.31` - Hand tracking and landmark detection
+- `opencv-python>=4.8.0` - Computer vision operations
+- `numpy>=1.24.0` - Numerical computations
+- `torch>=2.0.0` - Deep learning framework
+- `pillow>=9.0.0` - Image processing
+- `pandas>=1.5.0` - Data handling
+- `matplotlib>=3.7.0` - Visualization
+- `scikit-learn>=1.2.0` - Machine learning utilities
+- `pyyaml>=6.0` - Configuration file handling
+
 ## Static Signs (MLP) - Single Poses
 
 ```bash
 # 1. Record hand poses for letters
-python -m ml.record_landmarks
+python -m signsense.ml.record_landmarks
 
 # 2. Train model
-python -m ml.train
+python -m signsense.ml.train
 
 # 3. Run app
-python main.py  → Play Mode → Letters shown as they're detected
+python -m signsense.main  → Play Mode → Letters shown as they're detected
 ```
 
 **Controls during recording:**
@@ -27,19 +58,19 @@ python main.py  → Play Mode → Letters shown as they're detected
 
 ```bash
 # 1. Record J sign with stage boundaries
-python -m ml.dynamic_recorder
+python -m signsense.ml.dynamic_recorder
 
 # 2. Train LSTM model
-python -m ml.dynamic_train J
+python -m signsense.ml.dynamic_train J
 
 # 3. Record Z sign with stage boundaries
-python -m ml.dynamic_recorder
+python -m signsense.ml.dynamic_recorder
 
 # 4. Train LSTM model  
-python -m ml.dynamic_train Z
+python -m signsense.ml.dynamic_train Z
 
 # 5. Run app
-python main.py  → Debug Mode → See stages progress as you perform J or Z
+python -m signsense.main  → Debug Mode → See stages progress as you perform J or Z
 ```
 
 **Controls during recording:**
@@ -58,27 +89,47 @@ python main.py  → Debug Mode → See stages progress as you perform J or Z
 ## File Structure
 
 ```
-ml/
-├── data/
-│   ├── landmarks.npy         ← Static pose data (per letter)
-│   └── dynamic/
-│       ├── J/
-│       │   ├── J_s0_0.npy   ← Stage 0, sequence 0
-│       │   ├── J_s0_1.npy   ← Stage 0, sequence 1
-│       │   ├── J_s1_0.npy   ← Stage 1, sequence 0
-│       │   └── metadata.json
-│       └── Z/
-│           └── ...
-├── models/
-│   ├── sign_mlp.pt          ← Static sign model
-│   ├── dynamic_J.pt         ← J dynamic model
-│   └── dynamic_Z.pt         ← Z dynamic model
-├── record_landmarks.py      ← Record static poses
-├── dynamic_recorder.py      ← Record dynamic sequences
-├── train.py                 ← Train static signs
-├── dynamic_train.py         ← Train dynamic signs
-├── model.py                 ← DynamicSignMLP (CNN) architecture
-└── dynamic_model.py         ← DynamicSignLSTM architecture
+signsense/
+├── .venv/                    ← Virtual environment with all dependencies
+├── assets/
+│   ├── models/              ← MediaPipe landmark detection models
+│   ├── icons/               ← UI icon resources
+│   └── demo_videos/         ← Example videos
+├── config/
+│   ├── dynamic_config.py    ← Configuration for dynamic signs
+│   └── dynamic_signs.yaml   ← Dynamic sign definitions
+├── detector/
+│   ├── hand_tracker.py      ← Hand tracking using MediaPipe
+│   ├── face_tracker.py      ← Face tracking (experimental)
+│   └── asl_classifier_letters.py  ← ASL letter classification
+├── ml/
+│   ├── data/
+│   │   ├── landmarks.npy    ← Static pose data (per letter)
+│   │   └── dynamic/         ← Dynamic sequence data per sign
+│   ├── models/
+│   │   ├── sign_mlp.pt      ← Static sign model
+│   │   ├── dynamic_J.pt     ← J dynamic model
+│   │   └── dynamic_Z.pt     ← Z dynamic model
+│   ├── record_landmarks.py  ← Record static poses
+│   ├── dynamic_recorder.py  ← Record dynamic sequences
+│   ├── train.py             ← Train static signs
+│   ├── dynamic_train.py     ← Train dynamic signs
+│   ├── model.py             ← DynamicSignMLP (CNN) architecture
+│   └── dynamic_model.py     ← DynamicSignLSTM architecture
+├── signs/
+│   ├── dynamic_signs.py     ← Dynamic sign implementations
+│   ├── dynamic_sign_factory.py  ← Factory for creating dynamic signs
+│   ├── sign_registry.py     ← Sign registry for sign management
+│   └── trainable_dynamic_signs.py  ← Trainable dynamic sign definitions
+├── ui/
+│   ├── menu.py              ← Main menu UI
+│   ├── play_mode.py         ← Play mode UI
+│   └── overlay.py           ← Visual overlay for detections
+├── utils/
+│   ├── logger.py            ← Logging utilities
+│   └── smoothing.py         ← Detection smoothing algorithms
+├── requirements.txt         ← Required Python packages
+└── main.py                  ← Application entry point
 ```
 
 ---
@@ -133,21 +184,23 @@ Output (stage logits + transition confidence)
 
 ## Common Commands
 
+**Important:** Always activate the virtual environment first!
+
 ```bash
 # Record static signs
 python -m signsense.ml.record_landmarks
 
 # Train static signs
-python -m ml.train
+python -m signsense.ml.train
 
 # Record dynamic sign (e.g., J)
-python -m ml.dynamic_recorder
+python -m signsense.ml.dynamic_recorder
 
 # Train dynamic sign
-python -m ml.dynamic_train J
+python -m signsense.ml.dynamic_train J
 
 # Test recognition
-python main.py
+python -m signsense.main
 
 # Debug mode (see all scores)
 # (Launch from main menu)
@@ -159,12 +212,14 @@ python main.py
 
 | Problem | Solution |
 |---------|----------|
-| "No module named torch" | `pip install torch` |
-| Low accuracy (<80%) | Record more training data |
-| Model overfits | Add dropout, collect more varied data |
+| "No module named X" | Ensure you're using the correct virtual environment (signsense/.venv) |
+| "Python was not found" | Activate the virtual environment before running commands |
+| "ModuleNotFoundError: No module named 'signsense'" | Run commands from the root directory (d:/Jeff Code/SignSense) |
+| Low accuracy (<80%) | Record more training data from different angles and distances |
+| Model overfits | Add dropout, collect more varied data, or reduce model size |
 | Slow training | Use GPU or reduce model size |
-| "Model not found" | Train model first |
-| Dynamic signs don't work | Record sequences and train LSTM |
+| "Model not found" | Train the model first using the appropriate training command |
+| Dynamic signs don't work | Record complete sequences with clear stage boundaries and train the LSTM |
 
 ---
 

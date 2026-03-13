@@ -9,8 +9,9 @@ Usage:
 Controls:
   - Press A-Z to set the active label (shown on-screen)
   - While label is active, every detected hand frame is recorded
-  - ]: save and exit
+  - [: save and exit
   - ESC: exit without saving
+  - Close window: exit without saving
 
 Output:
   - Appends to ml/data/landmarks.csv across sessions
@@ -36,8 +37,15 @@ from signsense.ml.model import LandmarkNormaliser
 class LandmarkRecorder:
     """Record hand landmarks to CSV file, organised by ASL letter label."""
 
-    def __init__(self, output_dir: str = "ml/data"):
-        self.output_dir = Path(output_dir)
+    def __init__(self, output_dir: str = None):
+        # Determine the correct output directory relative to the script location
+        if output_dir is None:
+            script_dir = Path(__file__).parent
+            # The correct data directory is at the root level (SignSense/ml/data), not inside signsense
+            self.output_dir = script_dir.parent.parent / "ml" / "data"
+        else:
+            self.output_dir = Path(output_dir)
+        
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.csv_path = self.output_dir / "landmarks.csv"
         
@@ -48,6 +56,7 @@ class LandmarkRecorder:
         self.is_recording = False
         self.frame_count_for_label = 0
         self.total_rows_recorded = 0
+        self.recorded_data = []  # Store data in memory until saved
         
         # Load existing row count if CSV exists
         if self.csv_path.exists():
@@ -66,11 +75,9 @@ class LandmarkRecorder:
                 writer.writerow(header)
 
     def _append_row(self, label: str, normalized_features) -> None:
-        """Append one landmark row to CSV."""
-        with open(self.csv_path, "a", newline="") as f:
-            writer = csv.writer(f)
-            row = [label] + normalized_features.tolist()
-            writer.writerow(row)
+        """Append one landmark row to memory buffer."""
+        row = [label] + normalized_features.tolist()
+        self.recorded_data.append(row)
         self.total_rows_recorded += 1
         self.frame_count_for_label += 1
 
@@ -125,7 +132,7 @@ class LandmarkRecorder:
         print("=" * 60)
         print("Press letter key (A-Z) to set label")
         print("While active, every detected hand frame is recorded")
-        print("]: save and exit")
+        print("[: save and exit")
         print("ESC: exit without saving")
         print("=" * 60 + "\n")
         
@@ -200,7 +207,7 @@ class LandmarkRecorder:
                 if key == 27:  # ESC
                     print("\nExit without saving.")
                     break
-                elif key == ord(']'):  # ]
+                elif key == ord('['):  # [
                     self._save_and_exit()
                     break
                 elif 65 <= key <= 90 or 97 <= key <= 122:  # A-Z (uppercase) or a-z (lowercase)
@@ -214,22 +221,35 @@ class LandmarkRecorder:
                         self.is_recording = not self.is_recording
                         status = "RECORDING" if self.is_recording else "PAUSED"
                         print(f"{label}: {status}")
+                
+                # Check if window was closed
+                if cv2.getWindowProperty("Landmark Recorder", cv2.WND_PROP_VISIBLE) < 1:
+                    print("\nWindow closed - exiting without saving.")
+                    break
         
         finally:
             cap.release()
             cv2.destroyAllWindows()
 
     def _save_and_exit(self) -> None:
-        """Save backup copy and exit gracefully."""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_path = self.output_dir / f"landmarks_{timestamp}.csv"
+        """Save recorded data to CSV and exit gracefully."""
+        # Write all recorded data to CSV
+        with open(self.csv_path, "a", newline="") as f:
+            writer = csv.writer(f)
+            for row in self.recorded_data:
+                writer.writerow(row)
         
-        # Copy to backup
+        # Create backup in separate directory
+        backup_dir = self.output_dir / "backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_path = backup_dir / f"landmarks_{timestamp}.csv"
+        
         with open(self.csv_path, "r") as f_in:
             with open(backup_path, "w") as f_out:
                 f_out.write(f_in.read())
         
-        print(f"\nSaved {self.total_rows_recorded} rows to {self.csv_path}")
+        print(f"\nSaved {len(self.recorded_data)} new rows (total: {self.total_rows_recorded}) to {self.csv_path}")
         print(f"Backup: {backup_path}")
 
 

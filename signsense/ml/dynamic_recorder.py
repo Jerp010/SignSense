@@ -50,8 +50,15 @@ from signsense.config.dynamic_config import get_config, get_all_sign_names, Sign
 class DynamicSignRecorder:
     """Record sequences of hand landmarks for dynamic signs with stage labels."""
 
-    def __init__(self, output_base: str = "ml/data/dynamic"):
-        self.output_base = Path(output_base)
+    def __init__(self, output_base: str = None):
+        # Determine the correct output directory relative to the script location
+        if output_base is None:
+            script_dir = Path(__file__).parent
+            # The correct data directory is at the root level (SignSense/ml/data/dynamic), not inside signsense
+            self.output_base = script_dir.parent.parent / "ml" / "data" / "dynamic"
+        else:
+            self.output_base = Path(output_base)
+        
         self.output_base.mkdir(parents=True, exist_ok=True)
         
         self.normaliser = LandmarkNormaliser()
@@ -269,6 +276,11 @@ ESC: exit without saving
             
             elif key == 27:  # ESC
                 print("Exiting without saving.")
+                break
+            
+            # Check if window was closed
+            if cv2.getWindowProperty("Dynamic Sign Recorder", cv2.WND_PROP_VISIBLE) < 1:
+                print("Window closed - exiting without saving.")
                 break
         
         cap.release()
