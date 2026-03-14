@@ -232,7 +232,7 @@ class MainMenu:
 # ---------------------------------------------------------------------------
 
 LEVELS = [
-    {"id": "letters", "label": "Level 1 - Letters A-J",
+    {"id": "letters", "label": "Level 1 - Letters A-Y",
      "sub": "10 signs static + dynamic", "enabled": True},
     {"id": "numbers", "label": "Level 2 - Numbers 1-10",
      "sub": "Coming soon", "enabled": False},
