@@ -1,5 +1,11 @@
+# SignSense Dynamic Signs Configuration
+# Supports both complex (multi-stage) and simple (single-stage) gestures
+
 dynamic_signs:
+  # Complex gestures (multi-stage motion) - like letters J, Z
   J:
+    type: "complex"  # multi-stage motion gesture
+    description: "Letter J in ASL"
     detector:
       i_hold_frames: 6
       down_threshold: 0.06
@@ -17,6 +23,8 @@ dynamic_signs:
       2: "Step 3/3 — Palm away, hold I"
 
   Z:
+    type: "complex"
+    description: "Letter Z in ASL"
     detector:
       diagonal_threshold: 0.12
       horizontal_threshold: 0.08
@@ -32,3 +40,13 @@ dynamic_signs:
       1: "Step 2/4 — Horizontal stroke"
       2: "Step 3/4 — Diagonal stroke"
       3: "Step 4/4 — End position"
+
+# Simple gestures (single stage) - can be added dynamically
+# These are stored separately and loaded at runtime
+# Format: GESTURE_NAME:
+#   type: "simple"
+#   description: "Description of gesture"
+#   min_samples: 10  # minimum samples for training
+
+# Custom gestures will be automatically added to this config
+# when recording new gestures using the dynamic recorder

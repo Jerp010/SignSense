@@ -10,79 +10,170 @@ The project uses a dedicated virtual environment located at **`signsense/.venv`*
 cd signsense
 .venv\Scripts\activate
 
-# Activate the virtual environment (Linux/macOS)
-cd signsense
-source .venv/bin/activate
-
 # Verify installation
 python --version  # Should be Python 3.9-3.12
 pip list          # Should include all dependencies from requirements.txt
 ```
 
 ### Dependencies
-All required packages are listed in **`signsense/requirements.txt`** and pre-installed in the virtual environment:
-- `mediapipe>=0.10.31` - Hand tracking and landmark detection
-- `opencv-python>=4.8.0` - Computer vision operations
-- `numpy>=1.24.0` - Numerical computations
-- `torch>=2.0.0` - Deep learning framework
-- `pillow>=9.0.0` - Image processing
-- `pandas>=1.5.0` - Data handling
-- `matplotlib>=3.7.0` - Visualization
-- `scikit-learn>=1.2.0` - Machine learning utilities
-- `pyyaml>=6.0` - Configuration file handling
+All required packages are listed in **`signsense/requirements.txt`** and pre-installed in the virtual environment.
+
+---
+
+## Recording Training Data
+
+### Option 1: From UI Menu (Recommended)
+
+```bash
+# Run the application
+python -m signsense.main
+
+# Navigate: Main Menu → Debug → Record Data
+# Choose: Static Landmarks or Dynamic Gestures
+```
+
+### Option 2: Direct Command Line
+
+```bash
+# Static signs (single poses)
+python -m signsense.ml.record_landmarks
+
+# Dynamic signs (multi-stage movements)
+python -m signsense.ml.dynamic_recorder
+```
+
+---
 
 ## Static Signs (MLP) - Single Poses
 
-```bash
-# 1. Record hand poses for letters
-python -m signsense.ml.record_landmarks
+Record individual hand poses for letters or custom labels.
 
-# 2. Train model
-python -m signsense.ml.train
+### Recording Controls
+| Key | Action |
+|-----|--------|
+| `T` | Type custom label name |
+| `A-Z` | Quick select letter |
+| `SPACE` | Start/stop recording |
+| `[` | Save and exit |
+| `ESC` | Exit without saving |
 
-# 3. Run app
-python -m signsense.main  → Play Mode → Letters shown as they're detected
-```
+### Recording Process
+1. Press `T` → type custom label (e.g., "hello", "thank_you") → Enter
+2. Or press a letter key (A-Z) to select a letter
+3. Hold the pose in front of camera
+4. Press `SPACE` to start recording (status shows "●REC")
+5. Perform the gesture multiple times
+6. Press `SPACE` to stop recording
+7. Press `[` to save and exit
 
-**Controls during recording:**
-- Press `A-Z` to change letter label
-- Perform the letter pose (hold consistently)
-- Press `S` to save and exit
-- Press `ESC` to exit without saving
+### Adding More Samples to Existing Labels
+Simply select an existing label (A-Z or custom name) and record more samples. The system automatically appends to existing data.
 
-**Result:** `ml/models/sign_mlp.pt` (MLP model for A-D, etc.)
+**Result:** `ml/data/landmarks.csv` (appends new rows)
 
 ---
 
 ## Dynamic Signs (LSTM) - Multi-Stage Movements
 
-```bash
-# 1. Record J sign with stage boundaries
-python -m signsense.ml.dynamic_recorder
+Record sequences of hand movements with stage labels.
 
-# 2. Train LSTM model
-python -m signsense.ml.dynamic_train J
+### Recording Controls
+| Key | Action |
+|-----|--------|
+| `T` | Type custom gesture name |
+| `A-Z` | Quick select letter gesture |
+| `S` | Toggle simple/complex mode |
+| `0-9` | Set current stage |
+| `SPACE` | Start/stop recording |
+| `N` | Next stage (complex) / new sequence (simple) |
+| `Q` | Save and exit |
+| `ESC` | Exit without saving |
 
-# 3. Record Z sign with stage boundaries
-python -m signsense.ml.dynamic_recorder
+### Gesture Types
 
-# 4. Train LSTM model  
-python -m signsense.ml.dynamic_train Z
+**Simple Mode** - Single-stage gesture (one continuous motion)
+- Best for: Short gestures like "hello", "goodbye", "thanks"
+- Press `S` to toggle to Simple mode
 
-# 5. Run app
-python -m signsense.main  → Debug Mode → See stages progress as you perform J or Z
+**Complex Mode** - Multi-stage gesture (distinct phases)
+- Best for: Letters like J, Z that have clear stages
+- Press `S` to toggle to Complex mode
+- Use `0-9` to set stages
+
+### Recording Process (Complex Mode - e.g., J Sign)
+
+```
+Sign: J (3 stages)
+  Stage 0: Hold I handshape (pinky extended)
+  Stage 1: Hook pinky downward
+  Stage 2: Move hand to the right
+
+Steps:
+1. Press T → type "J" → Enter
+2. Press S to ensure Complex mode
+3. Press 0 → Set to Stage 0
+4. Press SPACE → Start recording
+   ... perform and hold Stage 0 ...
+5. Press SPACE → Stop (auto-saves Stage 0)
+6. Press N → Move to Stage 1
+7. Press SPACE → Start recording
+   ... perform Stage 1 motion ...
+8. Press SPACE → Stop
+9. Repeat for remaining stages
+10. Press Q → Save all stages
 ```
 
-**Controls during recording:**
-- Press `S` → Enter sign name (e.g., "J")
-- Press `0-9` → Set stage number
-- Press `SPACE` → Start/stop recording current stage
-- Press `N` → Move to next stage
-- Press `Q` → Save all stages and exit
+### Adding More Samples
+Select an existing gesture by name and record more sequences. The system appends to existing data automatically.
 
-**Result:** 
-- `ml/models/dynamic_J.pt` (LSTM model for J)
-- `ml/models/dynamic_Z.pt` (LSTM model for Z)
+**Result:** `ml/data/dynamic/<GESTURE_NAME>/` with `.npy` files and `metadata.json`
+
+---
+
+## Training Models
+
+### Train Static Sign Model (MLP)
+
+```bash
+python -m signsense.ml.train
+```
+
+**What happens:**
+- Loads all data from `ml/data/landmarks.csv`
+- Trains MLP to classify hand poses
+- Saves to `ml/models/sign_mlp.pt`
+
+### Train Dynamic Sign Model (LSTM)
+
+```bash
+# Train for a specific sign
+python -m signsense.ml.dynamic_train J
+python -m signsense.ml.dynamic_train Z
+python -m signsense.ml.dynamic_train hello  # custom gesture
+```
+
+**What happens:**
+- Loads sequences from `ml/data/dynamic/<SIGN>/`
+- Trains LSTM to recognize stages
+- Saves to `ml/models/dynamic_<SIGN>.pt`
+
+---
+
+## Running the Application
+
+```bash
+python -m signsense.main
+```
+
+### Menu Navigation
+```
+Main Menu
+  ├── PLAY    → Level Select → Play Mode
+  ├── DEBUG   → Debug Menu
+  │     ├── Record Data → Static / Dynamic Recorder
+  │     └── Train Model → (future)
+  └── QUIT
+```
 
 ---
 
@@ -90,46 +181,55 @@ python -m signsense.main  → Debug Mode → See stages progress as you perform 
 
 ```
 signsense/
-├── .venv/                    ← Virtual environment with all dependencies
+├── .venv/                    ← Virtual environment
 ├── assets/
-│   ├── models/              ← MediaPipe landmark detection models
-│   ├── icons/               ← UI icon resources
+│   ├── models/              ← MediaPipe detection models
+│   ├── icons/               ← UI icons
 │   └── demo_videos/         ← Example videos
 ├── config/
-│   ├── dynamic_config.py    ← Configuration for dynamic signs
-│   └── dynamic_signs.yaml   ← Dynamic sign definitions
+│   ├── dynamic_config.py    ← Dynamic sign configuration
+│   └── dynamic_signs.yaml   ← Sign definitions
 ├── detector/
-│   ├── hand_tracker.py      ← Hand tracking using MediaPipe
-│   ├── face_tracker.py      ← Face tracking (experimental)
-│   └── asl_classifier_letters.py  ← ASL letter classification
+│   ├── hand_tracker.py      ← MediaPipe hand tracking
+│   ├── face_tracker.py      ← Face tracking
+│   └── asl_classifier_letters.py  ← Classification
 ├── ml/
 │   ├── data/
-│   │   ├── landmarks.npy    ← Static pose data (per letter)
-│   │   └── dynamic/         ← Dynamic sequence data per sign
+│   │   ├── landmarks.csv   ← Static pose data (appends)
+│   │   └── dynamic/        ← Dynamic sequence data
+│   │       └── <GESTURE>/
+│   │           ├── *.npy   ← Sequence files
+│   │           └── metadata.json
 │   ├── models/
-│   │   ├── sign_mlp.pt      ← Static sign model
-│   │   ├── dynamic_J.pt     ← J dynamic model
-│   │   └── dynamic_Z.pt     ← Z dynamic model
-│   ├── record_landmarks.py  ← Record static poses
-│   ├── dynamic_recorder.py  ← Record dynamic sequences
-│   ├── train.py             ← Train static signs
-│   ├── dynamic_train.py     ← Train dynamic signs
-│   ├── model.py             ← DynamicSignMLP (CNN) architecture
-│   └── dynamic_model.py     ← DynamicSignLSTM architecture
+│   │   ├── sign_mlp.pt    ← Static sign model
+│   │   └── dynamic_*.pt   ← Dynamic sign models
+│   ├── config/
+│   │   ├── training.yaml  ← Training configuration
+│   │   └── config_loader.py
+│   ├── utils/
+│   │   ├── checkpoint.py  ← Model checkpointing
+│   │   ├── experiment_tracker.py
+│   │   └── metrics.py
+│   ├── record_landmarks.py  ← Static recorder
+│   ├── dynamic_recorder.py  ← Dynamic recorder
+│   ├── train.py             ← Static trainer
+│   ├── dynamic_train.py     ← Dynamic trainer
+│   ├── model.py             ← MLP architecture
+│   └── dynamic_model.py     ← LSTM architecture
 ├── signs/
-│   ├── dynamic_signs.py     ← Dynamic sign implementations
-│   ├── dynamic_sign_factory.py  ← Factory for creating dynamic signs
-│   ├── sign_registry.py     ← Sign registry for sign management
-│   └── trainable_dynamic_signs.py  ← Trainable dynamic sign definitions
+│   ├── dynamic_signs.py
+│   ├── dynamic_sign_factory.py
+│   ├── sign_registry.py
+│   └── trainable_dynamic_signs.py
 ├── ui/
-│   ├── menu.py              ← Main menu UI
-│   ├── play_mode.py         ← Play mode UI
-│   └── overlay.py           ← Visual overlay for detections
+│   ├── menu.py              ← Menu system
+│   ├── play_mode.py
+│   └── overlay.py
 ├── utils/
-│   ├── logger.py            ← Logging utilities
-│   └── smoothing.py         ← Detection smoothing algorithms
-├── requirements.txt         ← Required Python packages
-└── main.py                  ← Application entry point
+│   ├── logger.py
+│   └── smoothing.py
+├── requirements.txt
+└── main.py
 ```
 
 ---
@@ -146,7 +246,7 @@ Linear(256 → 128) + Batch Norm + ReLU + Dropout(0.2)
     ↓
 Linear(128 → 64) + Batch Norm + ReLU
     ↓
-Output (num_letters logits)
+Output (num_classes logits)
 ```
 
 ### Dynamic Signs (LSTM)
@@ -155,10 +255,10 @@ Sequence of frames (variable length)
     ↓
 LSTM (63 → 128 hidden, 2 layers)
     ↓
-Stage Head: Linear(128 → num_stages)    [predict current stage]
-Transition Head: Linear(128 → 1)        [detect stage transition]
+Stage Head: Linear(128 → num_stages)
+Transition Head: Linear(128 → 1)
     ↓
-Output (stage logits + transition confidence)
+Output (stage + transition detection)
 ```
 
 ---
@@ -168,14 +268,14 @@ Output (stage logits + transition confidence)
 ### Static Signs
 - **Optimizer:** Adam (lr=0.001)
 - **Loss:** CrossEntropyLoss
-- **Epochs:** Until convergence (typically 50-100)
+- **Epochs:** Until convergence
 - **Batch size:** 32
 - **Early stopping:** patience=15
 
 ### Dynamic Signs  
 - **Optimizer:** Adam (lr=0.001)
-- **Loss:** CrossEntropyLoss (per frame)
-- **Epochs:** Until convergence (typically 30-60)
+- **Loss:** CrossEntropyLoss
+- **Epochs:** Until convergence
 - **Batch size:** 4
 - **Train/Val split:** 80/20
 - **Early stopping:** patience=15
@@ -187,23 +287,20 @@ Output (stage logits + transition confidence)
 **Important:** Always activate the virtual environment first!
 
 ```bash
-# Record static signs
-python -m signsense.ml.record_landmarks
-
-# Train static signs
-python -m signsense.ml.train
-
-# Record dynamic sign (e.g., J)
-python -m signsense.ml.dynamic_recorder
-
-# Train dynamic sign
-python -m signsense.ml.dynamic_train J
-
-# Test recognition
+# Launch app with menu
 python -m signsense.main
 
-# Debug mode (see all scores)
-# (Launch from main menu)
+# Record static signs (from command line)
+python -m signsense.ml.record_landmarks
+
+# Record dynamic signs (from command line)
+python -m signsense.ml.dynamic_recorder
+
+# Train static model
+python -m signsense.ml.train
+
+# Train dynamic model
+python -m signsense.ml.dynamic_train <SIGN_NAME>
 ```
 
 ---
@@ -211,15 +308,14 @@ python -m signsense.main
 ## Troubleshooting
 
 | Problem | Solution |
-|---------|----------|
-| "No module named X" | Ensure you're using the correct virtual environment (signsense/.venv) |
-| "Python was not found" | Activate the virtual environment before running commands |
-| "ModuleNotFoundError: No module named 'signsense'" | Run commands from the root directory (d:/Jeff Code/SignSense) |
-| Low accuracy (<80%) | Record more training data from different angles and distances |
-| Model overfits | Add dropout, collect more varied data, or reduce model size |
+|--------|----------|
+| "No module named X" | Activate virtual environment first |
+| "Python was not found" | Use `.venv\Scripts\python.exe` or activate venv |
+| Low accuracy | Record more data from different angles |
+| Model overfits | Add dropout, more varied data |
 | Slow training | Use GPU or reduce model size |
-| "Model not found" | Train the model first using the appropriate training command |
-| Dynamic signs don't work | Record complete sequences with clear stage boundaries and train the LSTM |
+| "Model not found" | Train the model first |
+| Dynamic signs don't work | Record complete sequences with clear stages |
 
 ---
 
@@ -231,6 +327,7 @@ python -m signsense.main
 ✓ Hold each pose consistently (~1 sec)  
 ✓ Try different lighting conditions  
 ✓ Use both left and right hands  
+✓ Record 100+ samples per label
 
 ### Dynamic Signs
 ✓ Clearly define stage boundaries  
@@ -238,6 +335,17 @@ python -m signsense.main
 ✓ Perform movements at consistent speed  
 ✓ Record 5-10 complete sequences per sign  
 ✓ Be consistent with hand orientation  
+✓ Use Complex mode for multi-stage signs
+
+---
+
+## New Features (v0.8)
+
+- **Custom gesture names** - Not limited to A-Z letters
+- **Simple/Complex modes** - Toggle with S key
+- **Add to existing** - Seamlessly append samples
+- **UI integration** - Record from Debug menu
+- **Configuration auto-creation** - New gestures get default config
 
 ---
 

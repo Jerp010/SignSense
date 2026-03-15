@@ -63,7 +63,7 @@ from detector.face_tracker           import FaceTracker
 from detector.asl_classifier_letters import ASLClassifierLetters
 from utils.smoothing                 import PredictionSmoother
 from ui.overlay                      import Overlay, SignHoldTimer
-from ui.menu                         import MainMenu, LevelSelect
+from ui.menu                         import MainMenu, LevelSelect, DebugMenu, RecordMenu
 from ui.play_mode                    import PlayModeRenderer, StageTracker
 from signs.sign_registry             import ACTIVE_SIGNS, SignType
 
@@ -249,6 +249,80 @@ def run_level_select(W=640, H=480) -> str:
             et, data = _mouse_event
             _mouse_event = None
             result = ls.handle_event(et, data)
+            if result:
+                return result
+
+        if cv2.getWindowProperty(WIN, cv2.WND_PROP_VISIBLE) < 1:
+            return "back"
+
+
+# ---------------------------------------------------------------------------
+# State: DEBUG MENU  (no camera)
+# ---------------------------------------------------------------------------
+
+def run_debug_menu(W=640, H=480) -> str:
+    """Returns 'record'|'train'|'back'."""
+    WIN       = "SignSense"
+    cv2.setMouseCallback(WIN, _mouse_cb)
+    menu      = DebugMenu(W, H)
+    last_size = (W, H)
+
+    global _mouse_event
+    while True:
+        cur_size = get_window_size(WIN, W, H)
+        if cur_size != last_size:
+            menu      = DebugMenu(*cur_size)
+            last_size = cur_size
+
+        frame = menu.render()
+        cv2.imshow(WIN, frame)
+
+        key = cv2.waitKey(16) & 0xFF
+        result = menu.handle_event("key", key)
+        if result:
+            return result
+
+        if _mouse_event:
+            et, data = _mouse_event
+            _mouse_event = None
+            result = menu.handle_event(et, data)
+            if result:
+                return result
+
+        if cv2.getWindowProperty(WIN, cv2.WND_PROP_VISIBLE) < 1:
+            return "back"
+
+
+# ---------------------------------------------------------------------------
+# State: RECORD MENU  (no camera)
+# ---------------------------------------------------------------------------
+
+def run_record_menu(W=640, H=480) -> str:
+    """Returns 'record_static'|'record_dynamic'|'back'."""
+    WIN       = "SignSense"
+    cv2.setMouseCallback(WIN, _mouse_cb)
+    menu      = RecordMenu(W, H)
+    last_size = (W, H)
+
+    global _mouse_event
+    while True:
+        cur_size = get_window_size(WIN, W, H)
+        if cur_size != last_size:
+            menu      = RecordMenu(*cur_size)
+            last_size = cur_size
+
+        frame = menu.render()
+        cv2.imshow(WIN, frame)
+
+        key = cv2.waitKey(16) & 0xFF
+        result = menu.handle_event("key", key)
+        if result:
+            return result
+
+        if _mouse_event:
+            et, data = _mouse_event
+            _mouse_event = None
+            result = menu.handle_event(et, data)
             if result:
                 return result
 
@@ -564,9 +638,41 @@ def main():
                 if action == "play":
                     state = "LEVEL_SELECT"
                 elif action == "debug":
-                    state = "DEBUG"
+                    state = "DEBUG_MENU"
                 else:
                     state = "QUIT"
+                logger.info(f"STATE: {state}")
+
+            elif state == "DEBUG_MENU":
+                action = run_debug_menu(W, H)
+                logger.info(f"Debug menu action: {action}")
+                if action == "record":
+                    state = "RECORD_MENU"
+                elif action in ("train", "back"):
+                    state = "MAIN_MENU"
+                else:
+                    state = "MAIN_MENU"
+                logger.info(f"STATE: {state}")
+
+            elif state == "RECORD_MENU":
+                action = run_record_menu(W, H)
+                logger.info(f"Record menu action: {action}")
+                if action == "record_static":
+                    # Launch static landmark recorder
+                    from ml.record_landmarks import LandmarkRecorder
+                    recorder = LandmarkRecorder()
+                    recorder.run()
+                    state = "RECORD_MENU"  # Return to record menu after
+                elif action == "record_dynamic":
+                    # Launch dynamic gesture recorder
+                    from ml.dynamic_recorder import DynamicSignRecorder
+                    recorder = DynamicSignRecorder()
+                    recorder.run()
+                    state = "RECORD_MENU"  # Return to record menu after
+                elif action == "back":
+                    state = "DEBUG_MENU"
+                else:
+                    state = "DEBUG_MENU"
                 logger.info(f"STATE: {state}")
 
             elif state == "LEVEL_SELECT":

@@ -86,13 +86,27 @@ python -m ml.dynamic_recorder
 ```
 
 **Controls:**
-- **S** - Set sign name (e.g., "J", "Z")
-- **0-9** - Set current stage (e.g., Stage 0 = starting pose, Stage 1 = first move, etc.)
+- **T** - Type custom gesture name (e.g., "hello", "thank_you")
+- **A-Z** - Quick select letter gesture
+- **S** - Toggle simple/complex gesture mode
+- **0-9** - Set current stage (complex mode only)
 - **SPACE** - Start/stop recording for current stage
-- **N** - Move to next stage
+- **N** - Move to next stage (complex) or new sequence (simple)
 - **Q** - Save and exit
+- **ESC** - Exit without saving
 
-**Example: Recording J sign**
+### Gesture Types
+
+**Simple Mode** - Single continuous motion
+- Best for: Short gestures like "hello", "goodbye", "thanks"
+- Press S to toggle to Simple mode
+
+**Complex Mode** - Multi-stage gesture with distinct phases
+- Best for: Letters like J, Z that have clear stages
+- Press S to toggle to Complex mode
+- Use 0-9 to set stages
+
+**Example: Recording J sign (Complex Mode)**
 
 ```
 Sign: J (3 stages)
@@ -103,18 +117,23 @@ Sign: J (3 stages)
 
 Recording process:
 ```
-1. Press S → Enter "J"
-2. Press 0 → Set to Stage 0
-3. Press SPACE → Start recording
+1. Press T → Enter "J" (or press J key)
+2. Press S to ensure Complex mode
+3. Press 0 → Set to Stage 0
+4. Press SPACE → Start recording
    ... perform the I handshape hold ...
-4. Press SPACE → Stop recording (auto-saves Stage 0 sequence)
-5. Press N → Move to Stage 1
-6. Press SPACE → Start recording
+5. Press SPACE → Stop recording (auto-saves Stage 0 sequence)
+6. Press N → Move to Stage 1
+7. Press SPACE → Start recording
    ... perform the downward hook ...
-7. Press SPACE → Stop recording
-8. Repeat for Stage 2
-9. Press Q → Save all sequences
+8. Press SPACE → Stop recording
+9. Repeat for Stage 2
+10. Press Q → Save all sequences
 ```
+
+**Adding more samples to existing gestures:**
+- Simply select an existing gesture name and record more sequences
+- The system automatically appends to existing data
 
 **Best practices:**
 - Record 3-5 complete sequences for each sign
@@ -225,16 +244,21 @@ python -m ml.record_landmarks
 **What this does:**
 - Opens your webcam
 - Detects hand landmarks using MediaPipe
-- Saves normalized landmark frames to `ml/data/` directory
-- Creates separate files for each letter
+- Saves normalized landmark frames to CSV file
+- Creates separate entries for each label
 
 **Key options during recording:**
-- Press letter key (A-Z) to set the active label
-- While label is active, every detected hand frame is recorded
-- Press `]` to save and exit
-- Press `ESC` to exit without saving
+- Press **T** to type custom label (e.g., "hello", "thank_you")
+- Press **A-Z** to quick select letter
+- Press **SPACE** to start/stop recording
+- Press **]** to save and exit
+- Press **ESC** to exit without saving
 
-**Output:** `.npy` files in `ml/data/` containing numpy arrays of normalized landmarks
+**Adding samples to existing labels:**
+- Simply select an existing label and record more samples
+- The system automatically appends to existing data
+
+**Output:** `ml/data/landmarks.csv` with format: `label, f0, f1, ... f62`
 
 ### Step 2: Train the Model
 
@@ -349,6 +373,28 @@ If `sign_mlp.pt` doesn't exist:
 - Press ESC to return to menu
 
 ---
+
+## Recording via UI Menu
+
+You can also access recording directly from the application menu:
+
+```bash
+python -m signsense.main
+```
+
+**Menu Flow:**
+```
+Main Menu
+├── PLAY    → Level Select → Play Mode
+├── DEBUG   → Debug Menu
+│     ├── Record Data → Record Menu
+│     │     ├── Static Landmarks → Opens record_landmarks.py
+│     │     └── Dynamic Gestures → Opens dynamic_recorder.py
+│     └── Train Model → (future)
+└── QUIT
+```
+
+This provides a user-friendly way to access recording without using command line.
 
 ## File Structure
 
@@ -496,15 +542,19 @@ class DynamicSignLSTM(nn.Module):
 3. Train model: `python -m ml.dynamic_train <SIGN_NAME>`
 4. Use in app: `TrainedDynamicDetector("<SIGN_NAME>")`
 
-Example: Training Z sign
+Example: Training a custom "hello" gesture
 ```bash
-# Record Z movements with 4 stages
+# Record sequences for "hello" gesture
 python -m ml.dynamic_recorder
+# Press T → type "hello" → Enter
+# Press S to toggle to Simple mode (or Complex for multi-stage)
+# Record your gesture sequences
+# Press Q to save
 
-# Train model
-python -m ml.dynamic_train Z
+# Train the model
+python -m ml.dynamic_train hello
 
-# Model saved to: ml/models/dynamic_Z.pt
+# Now the "hello" gesture can be used in the app!
 ```
 
 
@@ -604,6 +654,6 @@ python main.py                      # Now all signs work!
 
 ---
 
-**Last Updated:** March 7, 2026
+**Last Updated:** March 15, 2026
 
 

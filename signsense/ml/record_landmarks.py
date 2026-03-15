@@ -1,21 +1,27 @@
 """
 ml/record_landmarks.py
-======================
+=====================
 Interactive CSV recorder for ASL hand landmark training data.
+
+Supports:
+- Custom gesture labels via text input
+- Adding more samples to existing labels
+- Continuous recording across sessions
 
 Usage:
   python -m ml.record_landmarks
 
 Controls:
-  - Press A-Z to set the active label (shown on-screen)
-  - While label is active, every detected hand frame is recorded
+  - T: Enter text mode to type custom label
+  - A-Z: Quick select letter label
+  - SPACE: Start/stop recording for current label
   - [: save and exit
   - ESC: exit without saving
   - Close window: exit without saving
 
 Output:
   - Appends to ml/data/landmarks.csv across sessions
-  - Backs up to ml/data/landmarks_<timestamp>.csv on each save
+  - Backs up to ml/data/backups/landmarks_<timestamp>.csv on each save
   - Format: label, x0,y0,z0, x1,y1,z1, ..., x20,y20,z20 (64 columns total)
 """
 
@@ -25,7 +31,7 @@ import time
 import sys
 from pathlib import Path
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict
 
 # Add parent directory to path so we can import signsense modules
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -52,19 +58,43 @@ class LandmarkRecorder:
         self.normaliser = LandmarkNormaliser()
         self.hand_tracker = HandTracker()
         
-        self.active_label = None
-        self.is_recording = False
-        self.frame_count_for_label = 0
-        self.total_rows_recorded = 0
-        self.recorded_data = []  # Store data in memory until saved
+        # Recording state
+        self.active_label: Optional[str] = None
+        self.is_recording: bool = False
+        self.frame_count_for_label: int = 0
+        self.total_rows_recorded: int = 0
+        self.recorded_data: list = []  # Store data in memory until saved
         
-        # Load existing row count if CSV exists
-        if self.csv_path.exists():
-            with open(self.csv_path, "r") as f:
-                self.total_rows_recorded = sum(1 for _ in f) - 1  # -1 for header
+        # Input mode
+        self.text_input_mode: bool = False
+        self.current_text: str = ""
+        
+        # Load existing data stats
+        self.label_counts: Dict[str, int] = {}
+        self._load_existing_counts()
         
         # Create CSV header if doesn't exist
         self._ensure_csv_header()
+
+    def _load_existing_counts(self):
+        """Load existing sample counts per label."""
+        if not self.csv_path.exists():
+            return
+        
+        try:
+            with open(self.csv_path, "r") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    label = row.get("label", "")
+                    if label:
+                        self.label_counts[label] = self.label_counts.get(label, 0) + 1
+        except Exception:
+            pass
+        
+        self.total_rows_recorded = sum(self.label_counts.values())
+        print(f"Loaded existing data: {self.total_rows_recorded} samples")
+        if self.label_counts:
+            print(f"Labels: {list(self.label_counts.keys())}")
 
     def _ensure_csv_header(self) -> None:
         """Create CSV with header if it doesn't exist."""
@@ -80,6 +110,57 @@ class LandmarkRecorder:
         self.recorded_data.append(row)
         self.total_rows_recorded += 1
         self.frame_count_for_label += 1
+        
+        # Update label counts
+        self.label_counts[label] = self.label_counts.get(label, 0) + 1
+
+    def set_label(self, label: str) -> None:
+        """Set the active label."""
+        self.active_label = label.upper().replace(" ", "_")
+        self.frame_count_for_label = 0
+        self.is_recording = True
+        
+        existing_count = self.label_counts.get(self.active_label, 0)
+        print(f"\nLabel set to: {self.active_label}")
+        print(f"  Existing samples: {existing_count}")
+        print(f"  Recording: ON")
+
+    def handle_text_input(self, key: int) -> bool:
+        """
+        Handle text input mode.
+        
+        Returns:
+            True if text input is active, False otherwise
+        """
+        if not self.text_input_mode:
+            return False
+        
+        # Enter key - confirm label
+        if key == 13:  # Enter
+            if self.current_text.strip():
+                self.set_label(self.current_text.strip())
+            self.text_input_mode = False
+            self.current_text = ""
+            return False
+        
+        # Escape - cancel text input
+        elif key == 27:  # Escape
+            self.text_input_mode = False
+            self.current_text = ""
+            return False
+        
+        # Backspace
+        elif key == 8:  # Backspace
+            self.current_text = self.current_text[:-1]
+        
+        # Regular character input
+        elif 32 <= key <= 126:  # Printable characters
+            char = chr(key)
+            # Limit length
+            if len(self.current_text) < 20:
+                self.current_text += char
+        
+        return True
 
     def _draw_text(self, img, text: str, pos, fontScale=0.6, color=(255, 255, 255)) -> None:
         """Draw text on image with black outline."""
@@ -130,10 +211,12 @@ class LandmarkRecorder:
         print("\n" + "=" * 60)
         print("LANDMARK RECORDER")
         print("=" * 60)
-        print("Press letter key (A-Z) to set label")
-        print("While active, every detected hand frame is recorded")
-        print("[: save and exit")
-        print("ESC: exit without saving")
+        print("Controls:")
+        print("  T         - Type custom label (e.g., 'hello', 'goodbye')")
+        print("  A-Z       - Quick select letter label")
+        print("  SPACE     - Toggle recording for current label")
+        print("  [         - Save and exit")
+        print("  ESC       - Exit without saving")
         print("=" * 60 + "\n")
         
         try:
@@ -162,40 +245,58 @@ class LandmarkRecorder:
                 # Draw UI overlay
                 y_offset = 30
                 
-                # Title
-                self._draw_text(frame, "LANDMARK RECORDER", (10, y_offset), fontScale=0.8, color=(0, 255, 0))
+                # Title bar
+                cv2.rectangle(frame, (0, 0), (w, 70), (30, 30, 40), -1)
+                
+                # Status
+                if self.text_input_mode:
+                    status = f"Type label: {self.current_text}_"
+                    color = (255, 200, 100)
+                else:
+                    rec_status = "●REC" if self.is_recording else "PAUSED"
+                    label_text = f"Label: {self.active_label or 'NOT SET'}"
+                    color = (0, 255, 0) if self.is_recording else (255, 255, 0)
+                    status = f"{label_text} | {rec_status}"
+                
+                self._draw_text(frame, status, (10, y_offset), fontScale=0.7, color=color)
                 y_offset += 40
                 
-                # Current label
-                if self.active_label:
-                    label_text = f"Label: {self.active_label}"
-                    color = (0, 255, 0) if self.is_recording else (255, 255, 0)
-                    self._draw_text(frame, label_text, (10, y_offset), color=color)
-                    y_offset += 35
+                # Progress bar (if label is set)
+                if self.active_label and not self.text_input_mode:
+                    existing = self.label_counts.get(self.active_label, 0)
+                    total = existing + self.frame_count_for_label
                     
-                    # Progress bar
-                    progress = min(self.frame_count_for_label / target_frames_per_label, 1.0)
+                    progress = min(total / target_frames_per_label, 1.0)
                     bar_width = int(progress * 200)
                     cv2.rectangle(frame, (10, y_offset), (10 + 200, y_offset + 20), (100, 100, 100), -1)
                     cv2.rectangle(frame, (10, y_offset), (10 + bar_width, y_offset + 20), (0, 255, 0), -1)
                     pct = int(progress * 100)
-                    self._draw_text(frame, f"{pct}%", (220, y_offset + 15), fontScale=0.6)
-                    y_offset += 35
-                else:
-                    self._draw_text(frame, "No label set", (10, y_offset), color=(128, 128, 128))
+                    self._draw_text(frame, f"{pct}% ({total}/{target_frames_per_label})", (220, y_offset + 15), fontScale=0.5)
                     y_offset += 35
                 
                 # Stats
                 self._draw_text(
                     frame,
-                    f"Frames (this label): {self.frame_count_for_label} | Total: {self.total_rows_recorded}",
+                    f"Frames (this session): {self.frame_count_for_label} | Total: {self.total_rows_recorded}",
                     (10, y_offset),
                     fontScale=0.5,
                     color=(200, 200, 200)
                 )
+                y_offset += 25
+                
+                # Existing samples for current label
+                if self.active_label and not self.text_input_mode:
+                    existing = self.label_counts.get(self.active_label, 0)
+                    self._draw_text(
+                        frame,
+                        f"Existing samples for '{self.active_label}': {existing}",
+                        (10, y_offset),
+                        fontScale=0.5,
+                        color=(150, 150, 150)
+                    )
                 
                 # Hand detection status
-                hand_status = "Hand: DETECTED" if hand_data else "Hand: not detected"
+                hand_status = "Hand: DETECTED" if hand_data else "Hand: NOT DETECTED"
                 color = (0, 255, 0) if hand_data else (0, 0, 255)
                 self._draw_text(frame, hand_status, (w - 250, 30), fontScale=0.6, color=color)
                 
@@ -204,23 +305,39 @@ class LandmarkRecorder:
                 # Handle key input
                 key = cv2.waitKey(1) & 0xFF
                 
-                if key == 27:  # ESC
+                # Handle text input mode
+                if self.handle_text_input(key):
+                    continue
+                
+                # T - Enter text input mode
+                if key == ord('t') or key == ord('T'):
+                    self.text_input_mode = True
+                    self.current_text = ""
+                    print("\nEnter label name (press Enter to confirm, ESC to cancel):")
+                
+                # ESC - Exit
+                elif key == 27:  # ESC
                     print("\nExit without saving.")
                     break
-                elif key == ord('['):  # [
+                
+                # [ - Save and exit
+                elif key == ord('['):
                     self._save_and_exit()
                     break
-                elif 65 <= key <= 90 or 97 <= key <= 122:  # A-Z (uppercase) or a-z (lowercase)
+                
+                # A-Z (upper and lower) - Quick select
+                elif 65 <= key <= 90 or 97 <= key <= 122:  # A-Z or a-z
                     label = chr(key).upper()
-                    if label != self.active_label:
-                        print(f"\nLabel changed to: {label}")
-                        self.active_label = label
-                        self.frame_count_for_label = 0
-                        self.is_recording = True
-                    else:
+                    self.set_label(label)
+                
+                # SPACE - Toggle recording
+                elif key == ord(' '):
+                    if self.active_label:
                         self.is_recording = not self.is_recording
                         status = "RECORDING" if self.is_recording else "PAUSED"
-                        print(f"{label}: {status}")
+                        print(f"{self.active_label}: {status}")
+                    else:
+                        print("Error: Set a label first (T or A-Z)")
                 
                 # Check if window was closed
                 if cv2.getWindowProperty("Landmark Recorder", cv2.WND_PROP_VISIBLE) < 1:

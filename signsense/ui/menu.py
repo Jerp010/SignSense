@@ -1,12 +1,14 @@
 """
 ui/menu.py
-==========
+=========
 OpenCV-drawn menus for SignSense.
 
 States
 ------
   MAIN_MENU       → show Play / Debug / Quit
   LEVEL_SELECT    → show available levels 
+  RECORD_MENU     → show recording options
+  DEBUG_MENU      → show debug options
 
 All menus are rendered purely with cv2 — no camera required.
 Each render() call returns the frame to display.
@@ -25,16 +27,16 @@ from utils.logger import logger
 # ---------------------------------------------------------------------------
 # Palette  — dark tech / arcade aesthetic
 # ---------------------------------------------------------------------------
-BG          = (15,  12,  20)    # near-black with purple tint
-PANEL       = (28,  24,  38)
-ACCENT      = (0,  210, 255)    # cyan
-ACCENT2     = (180,  60, 255)   # purple
+BG          = (15,  12, 20)    # near-black with purple tint
+PANEL       = (28, 24, 38)
+ACCENT      = (0, 210, 255)    # cyan
+ACCENT2     = (180, 60, 255)   # purple
 TEXT_WHITE  = (240, 235, 250)
 TEXT_DIM    = (110, 100, 130)
-TEXT_WARN   = (60,  180, 255)
-GREEN       = (80,  220, 120)
-RED         = (60,   60, 200)
-GOLD        = (40,  200, 255)
+TEXT_WARN   = (60, 180, 255)
+GREEN       = (80, 220, 120)
+RED         = (60, 60, 200)
+GOLD        = (40, 200, 255)
 
 FONT        = cv2.FONT_HERSHEY_DUPLEX
 FONT_MONO   = cv2.FONT_HERSHEY_PLAIN
@@ -222,6 +224,182 @@ class MainMenu:
         # Buttons
         for b in self._buttons:
             b.draw(frame)
+
+        _scanlines(frame)
+        return frame
+
+
+# ---------------------------------------------------------------------------
+# Debug Menu
+# ---------------------------------------------------------------------------
+
+class DebugMenu:
+    """
+    Renders the debug/experimental options menu.
+
+    Returns
+    -------
+    handle_event(event) → str | None
+        "record"    — go to record menu
+        "train"     — go to training menu
+        "back"      — return to main menu
+    """
+
+    def __init__(self, W=640, H=480):
+        self.W, self.H = W, H
+        self._t0     = time.time()
+        self._mouse  = (0, 0)
+
+        bw, bh = 260, 52
+        cx = W // 2
+        self._buttons = [
+            Button(cx - bw//2, 160, cx + bw//2, 160+bh, 
+                   "RECORD DATA", "record", (0, 180, 200)),
+            Button(cx - bw//2, 228, cx + bw//2, 228+bh, 
+                   "TRAIN MODEL", "train", (180, 100, 255)),
+        ]
+        
+        # Back button
+        self._back = Button(20, self.H - 60, 130, self.H - 20,
+                            "BACK", "back", (70, 60, 100))
+
+    def handle_event(self, event_type: str, data=None) -> Optional[str]:
+        if event_type == "mouse_move":
+            self._mouse = data
+            for b in self._buttons + [self._back]:
+                b.set_hover(*data)
+        elif event_type == "mouse_click":
+            if self._back.contains(*data):
+                logger.info("Debug menu: back")
+                return "back"
+            for b in self._buttons:
+                if b.contains(*data) and not b.disabled:
+                    logger.info(f"Debug menu: {b.value}")
+                    return b.value
+        elif event_type == "key":
+            if data == 27:  # ESC
+                logger.info("Debug menu: back (ESC)")
+                return "back"
+        return None
+
+    def render(self) -> np.ndarray:
+        frame = np.zeros((self.H, self.W, 3), dtype=np.uint8)
+        frame[:] = BG
+        _grid_bg(frame)
+
+        t = time.time() - self._t0
+
+        # Top bar
+        cv2.rectangle(frame, (0, 0), (self.W, 50), PANEL, -1)
+        _glow_text(frame, "DEBUG / EXPERIMENTAL", 20, 33, 0.8, (180, 100, 255), 2)
+
+        # Sub-label
+        _text_centered(frame, "Data collection and model training", 90, 0.5, TEXT_DIM)
+
+        # Description
+        _text_centered(frame, "Record new training data or train existing models", 
+                        120, 0.40, TEXT_DIM)
+
+        # Buttons
+        for b in self._buttons:
+            b.draw(frame)
+        
+        self._back.draw(frame)
+
+        # Animated accent
+        prog = (math.sin(t * 1.2) * 0.5 + 0.5)
+        w2 = int(self.W * prog)
+        cv2.line(frame, (0, self.H - 3), (w2, self.H - 3), ACCENT2, 2)
+
+        _scanlines(frame)
+        return frame
+
+
+# ---------------------------------------------------------------------------
+# Recording Menu - Data Collection Options
+# ---------------------------------------------------------------------------
+
+class RecordMenu:
+    """
+    Renders the recording options menu for data collection.
+
+    Returns
+    -------
+    handle_event(event) → str | None
+        "record_static"  — record static landmarks (letters)
+        "record_dynamic" — record dynamic signs (gestures)
+        "back"          — return to debug menu
+    """
+
+    def __init__(self, W=640, H=480):
+        self.W, self.H = W, H
+        self._t0     = time.time()
+        self._mouse  = (0, 0)
+
+        bw, bh = 320, 56
+        cx = W // 2
+        self._buttons = [
+            Button(cx - bw//2, 140, cx + bw//2, 140+bh, 
+                   "STATIC LANDMARKS", "record_static", (0, 180, 200)),
+            Button(cx - bw//2, 220, cx + bw//2, 220+bh, 
+                   "DYNAMIC GESTURES", "record_dynamic", (180, 100, 255)),
+        ]
+        # Back button
+        self._back = Button(20, self.H - 60, 130, self.H - 20,
+                            "BACK", "back", (70, 60, 100))
+
+    def handle_event(self, event_type: str, data=None) -> Optional[str]:
+        if event_type == "mouse_move":
+            self._mouse = data
+            for b in self._buttons + [self._back]:
+                b.set_hover(*data)
+        elif event_type == "mouse_click":
+            if self._back.contains(*data):
+                logger.info("Record menu: back")
+                return "back"
+            for b in self._buttons:
+                if b.contains(*data) and not b.disabled:
+                    logger.info(f"Record menu: {b.value}")
+                    return b.value
+        elif event_type == "key":
+            if data == 27:  # ESC
+                logger.info("Record menu: back (ESC)")
+                return "back"
+        return None
+
+    def render(self) -> np.ndarray:
+        frame = np.zeros((self.H, self.W, 3), dtype=np.uint8)
+        frame[:] = BG
+        _grid_bg(frame)
+
+        t = time.time() - self._t0
+
+        # Top bar
+        cv2.rectangle(frame, (0, 0), (self.W, 50), PANEL, -1)
+        _glow_text(frame, "RECORD DATA", 20, 33, 0.9, (0, 200, 255), 2)
+
+        # Sub-label
+        _text_centered(frame, "Collect training data for new signs", 90, 0.5, TEXT_DIM)
+
+        # Description texts
+        descriptions = [
+            "Record static hand positions (letters A-Z, custom labels)",
+            "Record dynamic gestures with motion (words, phrases)"
+        ]
+
+        # Buttons
+        for i, btn in enumerate(self._buttons):
+            btn.draw(frame)
+            # Description below button
+            sub_y = btn.y2 + 18
+            _text_centered(frame, descriptions[i], sub_y, 0.40, TEXT_DIM)
+
+        self._back.draw(frame)
+
+        # Animated accent
+        prog = (math.sin(t * 1.2) * 0.5 + 0.5)
+        w2 = int(self.W * prog)
+        cv2.line(frame, (0, self.H - 3), (w2, self.H - 3), (0, 200, 255), 2)
 
         _scanlines(frame)
         return frame

@@ -1,0 +1,163 @@
+# SignSense Training Configuration
+# Unified configuration for all model training
+
+# =============================================================================
+# Defaults - applied to all models unless overridden
+# =============================================================================
+defaults:
+  random_seed: 42
+  device: "auto"  # "cpu", "cuda", or "auto" (auto-detect)
+  precision: "fp32"  # "fp32", "fp16", "mixed"
+
+# =============================================================================
+# Data Configuration
+# =============================================================================
+data:
+  static:
+    # Path relative to project root
+    path: "ml/data/landmarks.csv"
+    train_split: 0.85
+    validation_split: 0.15
+    stratify: true
+    cache_enabled: true
+    
+  dynamic:
+    base_path: "ml/data/dynamic"
+    train_split: 0.80
+    validation_split: 0.20
+    stratify: false
+    sequence_length: 120  # Default max sequence length
+
+# =============================================================================
+# Model Architectures
+# =============================================================================
+models:
+  # Static MLP Model Configuration
+  static_mlp:
+    name: "SignMLP"
+    architecture:
+      input_size: 63  # 21 landmarks * 3 coords
+      hidden_layers: [256, 128, 64]
+      dropout: [0.3, 0.2, 0.0]
+      activation: "relu"
+      batch_norm: true
+      use_bias: true
+    
+    training:
+      epochs: 100
+      batch_size: 64
+      learning_rate: 0.001
+      weight_decay: 0.0001
+      label_smoothing: 0.1
+      gradient_clip: 1.0
+      
+      # Optimizer settings
+      optimizer: "adamw"
+      adam_beta1: 0.9
+      adam_beta2: 0.999
+      adam_eps: 1.0e-08
+      
+      # Scheduler settings
+      scheduler: "cosine_annealing"
+      warmup_epochs: 0
+      min_lr: 1.0e-06
+      
+      # Early stopping
+      early_stopping:
+        enabled: true
+        patience: 15
+        min_delta: 0.001
+        mode: "max"  # "max" for accuracy, "min" for loss
+    
+    # Data augmentation settings
+    augmentation:
+      enabled: true
+      noise_std: 0.005
+      x_flip_prob: 0.5
+      scale_range: [0.9, 1.1]
+      rotation_range: 15  # degrees
+
+  # Dynamic LSTM Model Configuration
+  dynamic_lstm:
+    name: "DynamicSignLSTM"
+    architecture:
+      input_size: 63  # 21 landmarks * 3 coords
+      hidden_size: 128
+      num_layers: 2
+      dropout: 0.3
+      bidirectional: false
+      use_attention: false
+    
+    training:
+      epochs: 50
+      batch_size: 8
+      learning_rate: 0.001
+      weight_decay: 0.0001
+      gradient_clip: 1.0
+      
+      # Optimizer settings
+      optimizer: "adam"
+      adam_beta1: 0.9
+      adam_beta2: 0.999
+      adam_eps: 1.0e-08
+      
+      # Scheduler settings
+      scheduler: "cosine_annealing"
+      warmup_epochs: 0
+      min_lr: 1.0e-06
+      
+      # Early stopping
+      early_stopping:
+        enabled: true
+        patience: 15
+        min_delta: 0.001
+        mode: "max"
+    
+    # Sequence-specific settings
+    sequence:
+      max_length: 120
+      padding_value: 0.0
+      label_padding: -1
+      use_mask: true
+
+# =============================================================================
+# Training Output Settings
+# =============================================================================
+output:
+  # Checkpoint settings
+  checkpoint_dir: "ml/models/checkpoints"
+  save_best_only: true
+  save_frequency: 5  # Save every N epochs
+  max_checkpoints_keep: 5  # Keep only N best checkpoints
+  
+  # Logging settings
+  log_dir: "logs/training"
+  log_frequency: 1  # Log every N epochs
+  print_frequency: 1  # Print progress every N epochs
+  use_tensorboard: false
+  
+  # Metrics and curves
+  metrics_dir: "ml/models/metrics"
+  save_training_curves: true
+  curves_format: "png"
+  
+  # Experiment tracking
+  experiment_dir: "ml/experiments"
+  track_experiments: true
+
+# =============================================================================
+# Hyperparameter Search Space (for future AutoML)
+# =============================================================================
+search_space:
+  static_mlp:
+    learning_rate: [0.0001, 0.0005, 0.001, 0.005]
+    batch_size: [16, 32, 64, 128]
+    hidden_layers: [[256, 128, 64], [512, 256, 128], [128, 64, 32]]
+    dropout: [0.2, 0.3, 0.4, 0.5]
+  
+  dynamic_lstm:
+    learning_rate: [0.0005, 0.001, 0.002]
+    batch_size: [4, 8, 16]
+    hidden_size: [64, 128, 256]
+    num_layers: [1, 2, 3]
+    dropout: [0.2, 0.3, 0.4]
