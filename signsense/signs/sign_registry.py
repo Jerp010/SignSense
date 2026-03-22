@@ -19,11 +19,31 @@ description : str          — one-line hint shown to the user
 preview_count : int        — how many preview images exist (pages in the box)
 preview_dir : str          — path relative to project root for preview assets
 enabled     : bool         — True = not yet implemented, skipped in play mode
+
+CSV Integration
+---------------
+For DYNAMIC signs, the enabled status can also be controlled via:
+- signsense/config/dynamic_signs.csv (CSV registry - quick overview)
+- signsense/config/dynamic_signs.yaml (YAML config - detailed parameters)
+
+The CSV provides a quick overview, while YAML has detector parameters.
 """
 
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Optional, List
+from typing import Optional, List, Dict
+
+# Import CSV registry for dynamic signs
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+
+from signsense.config.dynamic_config import (
+    get_csv_registry, 
+    get_enabled_dynamic_signs,
+    is_dynamic_sign_enabled,
+    CSVRegistryEntry
+)
 
 
 class SignType(Enum):
@@ -88,3 +108,107 @@ def get_active_letters() -> List[str]:
 
 def get_sign(letter: str) -> Optional[SignEntry]:
     return SIGN_BY_LETTER.get(letter.upper())
+
+
+# =============================================================================
+# CSV Registry Integration for Dynamic Signs
+# =============================================================================
+
+def get_dynamic_signs_from_csv() -> Dict[str, CSVRegistryEntry]:
+    """
+    Get all dynamic signs from the CSV registry.
+    
+    Returns:
+        Dictionary mapping letter -> CSVRegistryEntry
+    """
+    return get_csv_registry()
+
+
+def get_csv_enabled_dynamic_signs() -> List[str]:
+    """
+    Get list of enabled dynamic signs from CSV registry.
+    
+    Returns:
+        List of enabled dynamic sign letters
+    """
+    return get_enabled_dynamic_signs()
+
+
+def is_dynamic_sign_csv_enabled(letter: str) -> bool:
+    """
+    Check if a dynamic sign is enabled in CSV registry.
+    
+    Args:
+        letter: Sign letter to check
+    
+    Returns:
+        True if enabled in CSV, False otherwise or if not in CSV
+    """
+    return is_dynamic_sign_enabled(letter)
+
+
+def get_dynamic_sign_csv_entry(letter: str) -> Optional[CSVRegistryEntry]:
+    """
+    Get CSV registry entry for a dynamic sign.
+    
+    Args:
+        letter: Sign letter
+    
+    Returns:
+        CSVRegistryEntry if found, None otherwise
+    """
+    return get_csv_entry(letter)
+
+
+def get_all_dynamic_signs() -> List[SignEntry]:
+    """
+    Get all DYNAMIC signs from the main registry.
+    
+    Returns:
+        List of SignEntry objects with SignType.DYNAMIC
+    """
+    return [s for s in SIGN_REGISTRY if s.sign_type == SignType.DYNAMIC]
+
+
+def get_active_dynamic_signs() -> List[SignEntry]:
+    """
+    Get all enabled DYNAMIC signs.
+    
+    For DYNAMIC signs, enabled status is determined by:
+    1. The SignEntry.enabled field in SIGN_REGISTRY
+    2. Or the CSV registry if entry exists there
+    
+    Returns:
+        List of enabled SignEntry objects with SignType.DYNAMIC
+    """
+    dynamic_signs = []
+    for sign in SIGN_REGISTRY:
+        if sign.sign_type == SignType.DYNAMIC:
+            # Check CSV registry for enabled status
+            csv_entry = get_csv_entry(sign.letter)
+            if csv_entry:
+                if csv_entry.enabled:
+                    dynamic_signs.append(sign)
+            elif sign.enabled:
+                dynamic_signs.append(sign)
+    return dynamic_signs
+
+
+def get_dynamic_sign_letters() -> List[str]:
+    """
+    Get letters for all DYNAMIC signs.
+    
+    Returns:
+        List of letters for dynamic signs
+    """
+    return [s.letter for s in get_all_dynamic_signs()]
+
+
+def get_active_dynamic_sign_letters() -> List[str]:
+    """
+    Get letters for enabled DYNAMIC signs.
+    
+    Returns:
+        List of letters for enabled dynamic signs
+    """
+    return [s.letter for s in get_active_dynamic_signs()]

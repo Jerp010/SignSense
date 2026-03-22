@@ -26,7 +26,6 @@ Transitions
 
 import sys
 import concurrent.futures
-import threading
 from pathlib import Path
 
 # Add current directory to Python path for imports
@@ -103,7 +102,7 @@ def initialize_detectors():
     return hand_tracker, face_tracker, classifier
 
 def open_camera(W=640, H=480):
-    """Open camera with synchronous fallback for reliability."""
+    """Open camera with specified resolution and optimized buffer settings."""
     logger.debug(f"Attempting to open camera with resolution {W}x{H}")
     cap = cv2.VideoCapture(0)
     
@@ -118,22 +117,6 @@ def open_camera(W=640, H=480):
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     
     logger.debug("Camera opened successfully")
-    return cap
-
-
-# ---------------------------------------------------------------------------
-# Camera helpers
-# ---------------------------------------------------------------------------
-
-def open_camera(W=640, H=480):
-    cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
-        print("Error: Could not open camera.")
-        return None
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH,  W)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, H)
-    cap.set(cv2.CAP_PROP_FPS,          60)
-    cap.set(cv2.CAP_PROP_BUFFERSIZE,   1)
     return cap
 
 

@@ -152,22 +152,32 @@ class ASLClassifierLetters:
             print(f"[ASLClassifierLetters] Inference error: {e}")
             return None
         
-        # Build scores dict for all letters
-        scores = {
-            self._inv_label_map[i]: float(probs[i].cpu().numpy())
-            for i in range(len(self._inv_label_map))
-        }
-        
-        # Targeted mode (play mode): check only target_letter
+        # Targeted mode (play mode): check only target_letter - optimized path
         if target_letter:
-            confidence = scores.get(target_letter, 0.0)
+            target_idx = self._label_map.get(target_letter)
+            if target_idx is None:
+                return None
+            confidence = float(probs[target_idx].cpu().numpy())
             if confidence < self.min_confidence:
                 return None
+            # Build full scores dict only when needed for display
+            probs_np = probs.cpu().numpy()
+            scores = {
+                letter: float(probs_np[idx])
+                for letter, idx in self._inv_label_map.items()
+            }
             return {
                 "letter": target_letter,
                 "confidence": round(confidence, 3),
                 "scores": scores,
             }
+        
+        # Build scores dict for all letters
+        probs_np = probs.cpu().numpy()
+        scores = {
+            self._inv_label_map[i]: float(probs_np[i])
+            for i in range(len(self._inv_label_map))
+        }
         
         # Debug mode: return best-scoring letter if above threshold
         best_letter = max(scores, key=scores.get)

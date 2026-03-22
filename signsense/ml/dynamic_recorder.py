@@ -19,6 +19,7 @@ Controls:
   - S: Toggle simple/complex mode
   - SPACE: Start/stop recording
   - N: Next stage (complex mode) or new sequence (simple mode)
+  - P: Previous stage (go back)
   - Q: Save and exit
   - ESC: Exit without saving
 
@@ -120,6 +121,9 @@ class DynamicSignRecorder:
     
     def _load_existing_data(self):
         """Load existing sequences for the current gesture."""
+        # Initialize existing_sequences before early return
+        self.existing_sequences = {}
+        
         sign_dir = self._get_sign_dir()
         
         if not sign_dir.exists():
@@ -317,6 +321,25 @@ class DynamicSignRecorder:
         
         print(f"Stage: {self.current_stage}{stage_name}")
     
+    def prev_stage(self) -> None:
+        """Go back to previous stage."""
+        if self.current_stage > 0:
+            # Save current sequence if recording
+            if self.current_sequence and self.is_recording:
+                self.toggle_recording()  # Stop recording to save
+            
+            # Move to previous stage
+            self.current_stage -= 1
+            print(f"Moved back to stage {self.current_stage}")
+            
+            stage_name = ""
+            if self.sign_config and self.sign_config.stages:
+                stage_name = f" - {self.sign_config.stages.get(self.current_stage, '')}"
+            
+            print(f"Stage: {self.current_stage}{stage_name}")
+        else:
+            print("Already at stage 0 - cannot go back")
+    
     def handle_text_input(self, key: int) -> bool:
         """
         Handle text input mode.
@@ -506,6 +529,10 @@ Controls:
             # N - Next stage / new sequence
             elif key in (ord('n'), ord('N')):
                 self.next_stage()
+            
+            # P - Previous stage
+            elif key in (ord('p'), ord('P')):
+                self.prev_stage()
             
             # Q - Save and exit
             elif key in (ord('q'), ord('Q')):

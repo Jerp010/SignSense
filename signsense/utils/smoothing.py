@@ -1,6 +1,6 @@
 """Prediction smoothing for stable ASL letter display."""
 
-from collections import deque
+from collections import deque, Counter
 from typing import Optional
 
 
@@ -37,7 +37,6 @@ class PredictionSmoother:
             return None
 
         # Count most common non-None prediction
-        from collections import Counter
         non_none = [p for p in self.buffer if p is not None]
         if not non_none:
             return None

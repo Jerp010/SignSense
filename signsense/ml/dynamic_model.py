@@ -22,6 +22,7 @@ Architecture:
 import torch
 import torch.nn as nn
 import numpy as np
+import math
 from typing import Tuple, Optional, Dict, List
 from pathlib import Path
 
@@ -109,8 +110,6 @@ class DynamicSignNormaliser:
         Returns:
             np.ndarray of shape (len(landmarks_sequence), 63)
         """
-        import math
-        
         normalized_frames = []
         for frame_landmarks in landmarks_sequence:
             # Same logic as static normaliser

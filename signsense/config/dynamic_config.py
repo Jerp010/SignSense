@@ -6,8 +6,8 @@ providing a type-safe API for accessing detector and training parameters.
 Supports both predefined complex gestures and dynamically created simple gestures.
 """
 
-import os
 import yaml
+import csv
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any
@@ -65,6 +65,123 @@ class SignConfig:
     @property
     def is_complex(self) -> bool:
         return self.gesture_type == GestureType.COMPLEX
+
+
+@dataclass
+class CSVRegistryEntry:
+    """Entry from the dynamic signs CSV registry."""
+    letter: str
+    name: str
+    gesture_type: GestureType
+    description: str
+    enabled: bool = True
+    detector_type: str = "auto"  # auto, trained, hardcoded
+    num_stages: int = 1
+    min_samples: int = 10
+    model_exists: bool = False
+    data_path: str = ""
+
+
+def load_csv_registry(csv_path: str = None) -> Dict[str, CSVRegistryEntry]:
+    """
+    Load dynamic signs registry from CSV file.
+    
+    Args:
+        csv_path: Path to the CSV file. If None, uses default location.
+    
+    Returns:
+        Dictionary mapping letter -> CSVRegistryEntry
+    """
+    if csv_path is None:
+        csv_path = Path(__file__).parent / "dynamic_signs.csv"
+    else:
+        csv_path = Path(csv_path)
+    
+    registry: Dict[str, CSVRegistryEntry] = {}
+    
+    if not csv_path.exists():
+        return registry
+    
+    with open(csv_path, 'r', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            # Skip empty rows or comment-like rows
+            if not row.get('letter') or row.get('letter', '').startswith('#'):
+                continue
+            
+            # Parse gesture type
+            gesture_type = GestureType.COMPLEX
+            if row.get('type', '').lower() == 'simple':
+                gesture_type = GestureType.SIMPLE
+            
+            # Parse enabled
+            enabled = row.get('enabled', 'true').lower() == 'true'
+            
+            # Parse model exists
+            model_exists = row.get('model_exists', 'false').lower() == 'true'
+            
+            # Parse numeric fields
+            num_stages = int(row.get('num_stages', 1))
+            min_samples = int(row.get('min_samples', 10))
+            
+            entry = CSVRegistryEntry(
+                letter=row['letter'].upper(),
+                name=row.get('name', row['letter']),
+                gesture_type=gesture_type,
+                description=row.get('description', ''),
+                enabled=enabled,
+                detector_type=row.get('detector_type', 'auto'),
+                num_stages=num_stages,
+                min_samples=min_samples,
+                model_exists=model_exists,
+                data_path=row.get('data_path', '')
+            )
+            registry[entry.letter] = entry
+    
+    return registry
+
+
+def save_csv_registry(registry: Dict[str, CSVRegistryEntry], csv_path: str = None):
+    """
+    Save dynamic signs registry to CSV file.
+    
+    Args:
+        registry: Dictionary mapping letter -> CSVRegistryEntry
+        csv_path: Path to save the CSV file. If None, uses default location.
+    """
+    if csv_path is None:
+        csv_path = Path(__file__).parent / "dynamic_signs.csv"
+    else:
+        csv_path = Path(csv_path)
+    
+    # Add header comment
+    header_comment = """# SignSense Dynamic Signs Registry
+# This CSV provides a quick overview of all dynamic signs and their status.
+# Edit this file to enable/disable signs or modify basic metadata.
+# For detailed configuration, see dynamic_signs.yaml
+#
+# Columns:
+# - letter: Sign identifier (e.g., J, Z)
+# - name: Display name
+# - type: complex (multi-stage) or simple (single-stage)
+# - description: Human-readable description
+# - enabled: Whether the sign is active (true/false)
+# - detector_type: auto (prefer trained, fallback to hardcoded), trained, or hardcoded
+# - num_stages: Number of stages in the gesture sequence
+# - min_samples: Minimum samples required for training
+# - model_exists: Whether a trained model file exists (auto-updated)
+# - data_path: Path to recorded training data directory
+#"""
+    
+    with open(csv_path, 'w', encoding='utf-8') as f:
+        f.write(header_comment + "\n")
+        f.write("letter,name,type,description,enabled,detector_type,num_stages,min_samples,model_exists,data_path\n")
+        
+        for letter, entry in sorted(registry.items()):
+            f.write(f"{entry.letter},{entry.name},{entry.gesture_type.value},"
+                   f"\"{entry.description}\",{str(entry.enabled).lower()},"
+                   f"{entry.detector_type},{entry.num_stages},{entry.min_samples},"
+                   f"{str(entry.model_exists).lower()},{entry.data_path}\n")
 
 
 class DynamicSignConfig:
@@ -339,3 +456,41 @@ def create_default_config(gesture_name: str, gesture_type: GestureType = Gesture
             description or f"Custom complex gesture: {gesture_name}",
             {0: "Stage 1", 1: "Stage 2", 2: "Stage 3"}
         )
+
+
+# Convenience functions for CSV registry
+global_csv_registry: Dict[str, CSVRegistryEntry] = {}
+
+
+def get_csv_registry() -> Dict[str, CSVRegistryEntry]:
+    """Get the global CSV registry (lazy-loaded)."""
+    global global_csv_registry
+    if not global_csv_registry:
+        global_csv_registry = load_csv_registry()
+    return global_csv_registry
+
+
+def reload_csv_registry() -> Dict[str, CSVRegistryEntry]:
+    """Force reload the CSV registry from disk."""
+    global global_csv_registry
+    global_csv_registry = load_csv_registry()
+    return global_csv_registry
+
+
+def get_enabled_dynamic_signs() -> List[str]:
+    """Get list of enabled dynamic signs from CSV registry."""
+    registry = get_csv_registry()
+    return [letter for letter, entry in registry.items() if entry.enabled]
+
+
+def is_dynamic_sign_enabled(letter: str) -> bool:
+    """Check if a dynamic sign is enabled in the CSV registry."""
+    registry = get_csv_registry()
+    entry = registry.get(letter.upper())
+    return entry.enabled if entry else False
+
+
+def get_csv_entry(letter: str) -> Optional[CSVRegistryEntry]:
+    """Get CSV registry entry for a specific sign."""
+    registry = get_csv_registry()
+    return registry.get(letter.upper())
