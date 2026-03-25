@@ -1,0 +1,14 @@
+{
+  "sign_name": "Z",
+  "gesture_type": "complex",
+  "num_stages": 4,
+  "sequences_per_stage": {
+    "0": 2,
+    "1": 5,
+    "2": 2,
+    "3": 3
+  },
+  "total_sequences": 12,
+  "recorded_at": "2026-03-26T04:38:22.123785",
+  "description": "Letter Z in ASL"
+}

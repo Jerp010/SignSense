@@ -113,6 +113,19 @@ class TrainedDynamicDetector:
         self._frame_buffer = []
         self._stage_frames = 0
         self._stage_confidence = 0.0
+        self._final_stage_hold = 0
+    
+    @property
+    def stage_info(self) -> dict:
+        """Get current stage info for UI display."""
+        return {
+            'current_stage': self._current_stage,
+            'num_stages': self._num_stages,
+            'confidence': self._stage_confidence,
+            'phase_complete': self._phase_complete,
+            'stage_progress': self._stage_frames,
+            'final_stage_hold': getattr(self, '_final_stage_hold', 0)
+        }
     
     def update(self, landmarks, handedness: Optional[str]) -> bool:
         """
@@ -172,19 +185,26 @@ class TrainedDynamicDetector:
         # Update stage tracking
         self._stage_confidence = stage_confidence
         
-        if predicted_stage > self._current_stage:
-            # Stage progressed!
+        # Check for stage change - allow progression or regression
+        if predicted_stage != self._current_stage:
+            # Stage changed!
             print(f"[{self.sign_name}] Stage {self._current_stage} → {predicted_stage}")
             self._current_stage = predicted_stage
             self._stage_frames = 0
             
-            # Check if sign is complete
+            # Reset hold counter when reaching final stage
             if self._current_stage >= self._num_stages - 1:
-                # Reached final stage - sign is complete
-                self._phase_complete = True
-                print(f"[{self.sign_name}] Sign complete! ✓")
-                # Don't reset here - let caller know sign finished
-                return True
+                self._final_stage_hold = 0
+        else:
+            # Still in same stage - increment hold counter if at final stage
+            if self._current_stage >= self._num_stages - 1:
+                self._final_stage_hold = getattr(self, '_final_stage_hold', 0) + 1
+                # Need to hold final stage for minimum frames before completing
+                min_hold_frames = 10  # ~0.3 seconds at 30fps
+                if self._final_stage_hold >= min_hold_frames:
+                    self._phase_complete = True
+                    print(f"[{self.sign_name}] Sign complete! ✓ (held {self._final_stage_hold} frames)")
+                    return True
         
         self._stage_frames += 1
         

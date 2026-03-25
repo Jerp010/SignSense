@@ -284,7 +284,7 @@ def log_warning(message: str):
 def log_milestone(title: str, details: dict = None):
     """Log a significant milestone with optional structured details."""
     logger.info(f"{'='*70}")
-    logger.info(f"  ► {title}")
+    logger.info(f"  -> {title}")
     if details:
         for key, value in details.items():
             logger.info(f"    • {key}: {value}")

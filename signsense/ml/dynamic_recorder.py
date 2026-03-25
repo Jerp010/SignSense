@@ -194,7 +194,12 @@ class DynamicSignRecorder:
         # Build metadata
         sign_dir = self._get_sign_dir()
         
-        # Count total sequences
+        # Save each sequence to disk FIRST
+        for stage_num, sequences in self.stage_sequences.items():
+            for seq in sequences:
+                self._save_sequence(stage_num, seq)
+        
+        # Count total sequences saved
         total_sequences = sum(len(seqs) for seqs in self.stage_sequences.values())
         
         metadata = {

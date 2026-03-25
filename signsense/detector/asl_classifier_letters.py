@@ -157,14 +157,15 @@ class ASLClassifierLetters:
             target_idx = self._label_map.get(target_letter)
             if target_idx is None:
                 return None
-            confidence = float(probs[target_idx].cpu().numpy())
+            confidence = float(probs[int(target_idx)].cpu().numpy())
             if confidence < self.min_confidence:
                 return None
             # Build full scores dict only when needed for display
+            # _inv_label_map is {idx: letter}, so iterate over indices
             probs_np = probs.cpu().numpy()
             scores = {
                 letter: float(probs_np[idx])
-                for letter, idx in self._inv_label_map.items()
+                for idx, letter in self._inv_label_map.items()
             }
             return {
                 "letter": target_letter,

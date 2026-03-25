@@ -160,9 +160,11 @@ def train_dynamic_sign(
     # Normalize sign name
     sign_name = sign_name.upper()
     
-    # Setup paths
-    data_path = Path(data_dir) / sign_name
-    output_path = Path(output_dir)
+    # Setup paths - resolve relative to project root, not current directory
+    # Get project root (parent of signsense package)
+    project_root = Path(__file__).resolve().parent.parent.parent
+    data_path = project_root / data_dir / sign_name
+    output_path = project_root / output_dir
     output_path.mkdir(parents=True, exist_ok=True)
     
     # Load configuration
@@ -339,7 +341,7 @@ def train_dynamic_sign(
                 "stage_names": stage_names
             }, checkpoint_path)
             
-            logger.info(f"Epoch {epoch+1:3d} | Loss: {train_loss:.4f} | Val Acc: {val_acc:.4f} ✓ (saved)")
+            logger.info(f"Epoch {epoch+1:3d} | Loss: {train_loss:.4f} | Val Acc: {val_acc:.4f} * (saved)")
         else:
             patience_counter += 1
         

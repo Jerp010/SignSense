@@ -1,11 +1,12 @@
 """
 ui/play_mode.py
 ===============
-Play mode for SignSense.
+Play mode for SignSense - Gesture-based version.
 
-Manages per-sign stage progression:
-  • Static signs  → user must hold the sign for HOLD_SECONDS
-  • Dynamic signs → dedicated detector fires on completion
+Manages per-gesture stage progression using 9 ASL signs:
+  HELLO, THANK YOU, NAME, GOOD, HELP, WATER, YES, NO, BAD
+
+User must hold each gesture for HOLD_SECONDS to complete a stage.
 
 Layout
 ------
@@ -15,17 +16,15 @@ Layout
   │                        │ SIGN PANEL  │  │
   │                        └─────────────┘  │
   │ ─── progress bar ─────────────────────  │
-  │ ─── score bars (debug strip) ────────── │
   │                   ┌──────────────────┐  │
   │                   │  PREVIEW BOX     │  │
   │                   └──────────────────┘  │
   └─────────────────────────────────────────┘
 
 The preview box sits in the bottom-right corner and cycles through up to
-3 placeholder images (or real images when assets/signs/<LETTER>/ is populated).
+3 placeholder images (or real images when assets/signs/<GESTURE>/ is populated).
 
-Only letters in ACTIVE_SIGNS (sign_registry.py) appear as stages.
-Currently stops at J.
+Only the 9 defined gestures appear as stages.
 """
 
 import cv2
@@ -34,29 +33,106 @@ import math
 import time
 from typing import Optional, Dict, List, Any
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from utils.logger import logger
 
-from signs.sign_registry import ACTIVE_SIGNS, SignType, SignEntry
-from signs.dynamic_signs  import get_detector
+# Import gesture detection components
+from signsense.signs.gesture_definitions import (
+    GESTURE_REGISTRY,
+    GestureClass,
+    get_all_gestures
+)
+from signsense.detector.gesture_detector import GestureDetector, DetectionResult
+
+
+# ---------------------------------------------------------------------------
+# Gesture stage list - the 9 ASL gestures
+# ---------------------------------------------------------------------------
+
+class GestureStage:
+    """Represents a gesture stage in the game."""
+    
+    def __init__(self, gesture: GestureClass):
+        self.gesture = gesture
+        self.name = gesture.name
+        # Shorter description for UI
+        self.description = f"{gesture.hand_shape.value}"
+    
+    @property
+    def display_name(self) -> str:
+        """Name to display in UI."""
+        return self.name
+    
+    @property
+    def hand_shape(self) -> str:
+        return self.gesture.hand_shape.value
+    
+    @property
+    def movement(self) -> str:
+        return self.gesture.movement_pattern.value
+    
+    @property
+    def target_region(self) -> str:
+        """Target body region for this gesture."""
+        return self.gesture.target_region if hasattr(self.gesture, 'target_region') else ""
+
+
+class LetterStage:
+    """Represents a letter stage in the game (Level 1)."""
+    
+    def __init__(self, sign_entry):
+        self.sign_entry = sign_entry
+        self.name = sign_entry.letter
+        self.description = sign_entry.description
+    
+    @property
+    def display_name(self) -> str:
+        """Letter to display in UI."""
+        return self.name
+    
+    @property
+    def hand_shape(self) -> str:
+        return "static" if self.sign_entry.sign_type.name == "STATIC" else "dynamic"
+    
+    @property
+    def movement(self) -> str:
+        return "hold" if self.sign_entry.sign_type.name == "STATIC" else "motion"
+
+
+# Create ordered list of gesture stages
+GESTURE_STAGES: List[GestureStage] = [
+    GestureStage(GESTURE_REGISTRY["HELLO"]),
+    GestureStage(GESTURE_REGISTRY["THANK YOU"]),
+    GestureStage(GESTURE_REGISTRY["NAME"]),
+    GestureStage(GESTURE_REGISTRY["GOOD"]),
+    GestureStage(GESTURE_REGISTRY["HELP"]),
+    GestureStage(GESTURE_REGISTRY["WATER"]),
+    GestureStage(GESTURE_REGISTRY["YES"]),
+    GestureStage(GESTURE_REGISTRY["NO"]),
+    GestureStage(GESTURE_REGISTRY["BAD"]),
+]
 
 
 # ---------------------------------------------------------------------------
 # Layout / palette constants
 # ---------------------------------------------------------------------------
-BG          = (15,  12,  20)
-PANEL_BG    = (22,  18,  32)
-ACCENT      = (0,  210, 255)
-ACCENT2     = (180,  60, 255)
-GREEN       = (80,  220, 120)
-ORANGE      = (40,  165, 255)
-RED_COL     = (60,   60, 200)
+BG          = (15,  12, 20)
+PANEL_BG    = (22, 18, 32)
+ACCENT      = (0, 210, 255)
+ACCENT2     = (180, 60, 255)
+GREEN       = (80, 220, 120)
+ORANGE      = (40, 165, 255)
+RED_COL     = (60, 60, 200)
 WHITE       = (240, 235, 250)
 DIM         = (110, 100, 130)
-GOLD        = (40,  200, 255)
+GOLD        = (40, 200, 255)
 FONT        = cv2.FONT_HERSHEY_DUPLEX
 FONT_MONO   = cv2.FONT_HERSHEY_PLAIN
 
-HOLD_SECONDS    = 3.0   # seconds to hold a static sign
+HOLD_SECONDS    = 3.0   # seconds to hold a gesture
 CONFIRM_FLASH   = 1.2   # seconds to show the "✓" flash
 
 
@@ -87,7 +163,7 @@ def _rr(frame, x1, y1, x2, y2, color, thick=-1, r=6):
 
 class PreviewBox:
     """
-    Shows reference images for the current sign.
+    Shows reference images for the current gesture.
     3 pages cycled by clicking left/right arrows or pressing ← →.
 
     If real images don't exist yet, draws a styled placeholder.
@@ -120,22 +196,17 @@ class PreviewBox:
             elif rx - 26 <= mx <= rx and ry//2 - 16 <= my <= ry//2 + 16:
                 self._page = (self._page + 1) % self.PAGES
 
-    def render(self, letter: str, sign_entry: Optional[SignEntry]) -> np.ndarray:
+    def render(self, gesture_name: str) -> np.ndarray:
         img = np.zeros((self.H, self.W, 3), dtype=np.uint8)
         img[:] = PANEL_BG
 
-        # Try to load a real image
+        # Try to load a real image (check assets/signs/<GESTURE>/)
         loaded = False
-        if sign_entry and sign_entry.preview_dir:
-            path = f"{sign_entry.preview_dir}/view_{self._page + 1}.png"
-            raw = cv2.imread(path)
-            if raw is not None:
-                raw = cv2.resize(raw, (self.W - 2, self.H - 40))
-                img[20:20 + raw.shape[0], 1:1 + raw.shape[1]] = raw
-                loaded = True
-
+        # For now, we don't have gesture-specific images, so show placeholder
+        # Path would be: f"assets/signs/{gesture_name}/view_{self._page + 1}.png"
+        
         if not loaded:
-            self._draw_placeholder(img, letter)
+            self._draw_placeholder(img, gesture_name)
 
         # Page indicator dots
         dot_y = self.H - 10
@@ -154,17 +225,18 @@ class PreviewBox:
 
         return img
 
-    def _draw_placeholder(self, img: np.ndarray, letter: str):
+    def _draw_placeholder(self, img: np.ndarray, gesture_name: str):
         """Placeholder when no image is available."""
         H, W = img.shape[:2]
         # Grey inner area
         cv2.rectangle(img, (4, 18), (W - 4, H - 18), (35, 30, 48), -1)
-        # Large letter
-        scale = 2.8
-        (tw, th), _ = cv2.getTextSize(letter, FONT, scale, 4)
+        # Large gesture name (abbreviated if needed)
+        display = gesture_name[:8] if len(gesture_name) > 8 else gesture_name
+        scale = 2.0
+        (tw, th), _ = cv2.getTextSize(display, FONT, scale, 4)
         tx = (W - tw) // 2
         ty = (H - 20 + th) // 2
-        cv2.putText(img, letter, (tx, ty), FONT, scale, (40, 180, 220), 4, cv2.LINE_AA)
+        cv2.putText(img, display, (tx, ty), FONT, scale, (40, 180, 220), 4, cv2.LINE_AA)
         # "no image" label
         cv2.putText(img, "preview", (W//2 - 28, H - 22), FONT, 0.35, DIM, 1, cv2.LINE_AA)
 
@@ -175,31 +247,29 @@ class PreviewBox:
 
 class StageTracker:
     """
-    Owns progression through the sign list.
+    Owns progression through the gesture/letter stages.
 
-    States per sign
+    States per stage
     ---------------
     WAITING     — no correct sign detected yet
-    HOLDING     — correct static sign is being held (progress 0→1)
+    HOLDING     — correct sign is being held (progress 0→1)
     CONFIRMING  — hold complete, "Next" button / SPACE to advance
     COMPLETE    — all signs done
     """
 
-    def __init__(self, signs: List[SignEntry]):
-        self._signs         = signs
+    def __init__(self, stages):
+        self._stages       = stages
         self._idx           = 0
         self._state         = "WAITING"
         self._hold_start    = None
         self._confirm_time  = None
-        self._dynamic_det   = None
-        self._load_detector()
 
     # -- public read --------------------------------------------------------
 
     @property
-    def current_sign(self) -> Optional[SignEntry]:
-        if self._idx < len(self._signs):
-            return self._signs[self._idx]
+    def current_stage(self):
+        if self._idx < len(self._stages):
+            return self._stages[self._idx]
         return None
 
     @property
@@ -220,101 +290,74 @@ class StageTracker:
 
     @property
     def total_stages(self) -> int:
-        return len(self._signs)
+        return len(self._stages)
 
     @property
     def is_complete(self) -> bool:
         return self._state == "COMPLETE"
 
-    @property
-    def dynamic_hint(self) -> str:
-        if self._dynamic_det:
-            return self._dynamic_det.stage_label
-        return ""
-
     # -- main update --------------------------------------------------------
 
-    def update(self, classifier_result: Optional[Dict],
-               landmarks=None, handedness=None) -> bool:
+    def update(self, detection_result: Optional[DetectionResult]) -> bool:
         """
-        Call every frame.
-        Returns True the moment the current sign is confirmed (advance ready).
+        Call every frame with gesture detection result.
+        Returns True the moment the current gesture is confirmed (advance ready).
         """
-        # track state transitions for logging
-        prev_state = self._state
+        try:
+            # track state transitions for logging
+            prev_state = self._state
 
-        sign = self.current_sign
-        if sign is None:
-            self._state = "COMPLETE"
-            if prev_state != self._state:
-                logger.debug(f"StageTracker state change {prev_state} -> {self._state}")
-            return False
-
-        letter = classifier_result.get("letter") if classifier_result else None
-
-        # ── DYNAMIC sign ────────────────────────────────────────────────────
-        if sign.sign_type == SignType.DYNAMIC:
-            if self._dynamic_det is None:
-                return False
-            if self._state == "CONFIRMING":
-                return False   # waiting for user to press Next
-            done = self._dynamic_det.update(landmarks, handedness)
-            if done:
-                self._state        = "CONFIRMING"
-                self._confirm_time = time.time()
-                logger.info(f"Dynamic sign '{sign.letter}' detected, entering CONFIRMING")
+            stage = self.current_stage
+            if stage is None:
+                self._state = "COMPLETE"
                 if prev_state != self._state:
                     logger.debug(f"StageTracker state change {prev_state} -> {self._state}")
-                return True
-            return False
+                return False
 
-        # ── STATIC sign ─────────────────────────────────────────────────────
-        correct = (letter == sign.letter)
+            # Get detected gesture name
+            detected_name = detection_result.sign_name if detection_result else None
+            detected_conf = detection_result.confidence if detection_result else 0.0
 
-        if self._state == "WAITING":
-            if correct:
-                self._state      = "HOLDING"
-                self._hold_start = time.time()
+            # Check if detected gesture matches current target
+            correct = (detected_name == stage.name)
 
-        elif self._state == "HOLDING":
-            if not correct:
-                # Lost the sign — restart hold
-                self._state      = "WAITING"
-                self._hold_start = None
-            elif self.progress >= 1.0:
-                self._state        = "CONFIRMING"
-                self._confirm_time = time.time()
-                return True
+            if self._state == "WAITING":
+                if correct:
+                    self._state      = "HOLDING"
+                    self._hold_start = time.time()
+                    logger.info(f"Gesture '{stage.name}' detected, starting hold")
 
-        elif self._state == "CONFIRMING":
-            pass  # waiting for user to press Next
+            elif self._state == "HOLDING":
+                if not correct:
+                    # Lost the gesture — restart hold
+                    self._state      = "WAITING"
+                    self._hold_start = None
+                elif self.progress >= 1.0:
+                    self._state        = "CONFIRMING"
+                    self._confirm_time = time.time()
+                    logger.info(f"Gesture '{stage.name}' confirmed!")
+                    return True
 
-        # log any state change that occurred during this update
-        if self._state != prev_state:
-            logger.debug(f"StageTracker state change {prev_state} -> {self._state} (sign={sign.letter if sign else None})")
+            elif self._state == "CONFIRMING":
+                pass  # waiting for user to press Next
 
+            # log any state change that occurred during this update
+            if self._state != prev_state:
+                logger.debug(f"StageTracker state change {prev_state} -> {self._state} (gesture={stage.name if stage else None})")
+        except Exception as e:
+            logger.error(f"StageTracker.update error: {e}")
+            import traceback
+            traceback.print_exc()
+        
         return False
 
     def advance(self):
-        """Move to the next sign. Called when user presses SPACE / Next."""
+        """Move to the next gesture. Called when user presses SPACE / Next."""
         self._idx  += 1
-        logger.info(f"Advancing to next sign ({self.stage_num}/{self.total_stages})")
+        logger.info(f"Advancing to next gesture ({self.stage_num}/{self.total_stages})")
         self._state = "WAITING"
         self._hold_start   = None
         self._confirm_time = None
-        if self._dynamic_det:
-            self._dynamic_det.reset()
-        self._load_detector()
-
-    def _load_detector(self):
-        sign = self.current_sign
-        if sign and sign.sign_type == SignType.DYNAMIC:
-            self._dynamic_det = get_detector(sign.letter)
-            logger.debug(f"Loaded dynamic detector for {sign.letter}")
-        else:
-            if self._dynamic_det:
-                logger.debug("Clearing dynamic detector")
-            self._dynamic_det = None
 
 
 # ---------------------------------------------------------------------------
@@ -325,7 +368,7 @@ class PlayModeRenderer:
     """
     Composites the full play-mode frame from a camera feed + overlay data.
 
-    Call render() every frame after updating stage_tracker and classifier.
+    Call render() every frame after updating stage_tracker and gesture detector.
     """
 
     def __init__(self, W=640, H=480):
@@ -354,12 +397,12 @@ class PlayModeRenderer:
     def render(self,
                camera_frame: np.ndarray,
                stage_tracker: "StageTracker",
-               classifier_result: Optional[Dict],
+               detection_result: Optional[DetectionResult],
                fps: float,
                hand_detected: bool) -> np.ndarray:
 
         frame = camera_frame.copy()
-        sign  = stage_tracker.current_sign
+        stage = stage_tracker.current_stage
 
         if stage_tracker.is_complete:
             return self._render_complete(frame)
@@ -368,10 +411,10 @@ class PlayModeRenderer:
         self._draw_hud(frame, stage_tracker, fps, hand_detected)
 
         # ── Sign panel (right side) ─────────────────────────────────────────
-        self._draw_sign_panel(frame, stage_tracker, classifier_result)
+        self._draw_sign_panel(frame, stage_tracker, detection_result)
 
         # ── Full-width progress bar ─────────────────────────────────────────
-        self._draw_progress_bar(frame, stage_tracker, classifier_result)
+        self._draw_progress_bar(frame, stage_tracker, detection_result)
 
 
         # ── Preview box (bottom right) ──────────────────────────────────────
@@ -380,12 +423,12 @@ class PlayModeRenderer:
         fH, fW = frame.shape[:2]
         bx, by = self.get_preview_box_origin(fW, fH)
         preview = self.preview_box.render(
-            sign.letter if sign else "?", sign)
+            stage.name if stage else "?")
         frame[by:by + PreviewBox.H, bx:bx + PreviewBox.W] = preview
 
         # ── Confirming flash ────────────────────────────────────────────────
         if stage_tracker.state == "CONFIRMING":
-            self._draw_confirm_flash(frame, sign)
+            self._draw_confirm_flash(frame, stage)
 
         return frame
 
@@ -422,7 +465,7 @@ class PlayModeRenderer:
             cy = 44
             cv2.circle(frame, (cx, cy), 4, color, -1)
 
-    def _draw_sign_panel(self, frame, tracker, classifier_result):
+    def _draw_sign_panel(self, frame, tracker, detection_result):
         H, W = frame.shape[:2]
         pw, ph = 185, 200
         px = W - pw - 8
@@ -433,54 +476,59 @@ class PlayModeRenderer:
         cv2.addWeighted(overlay, 0.82, frame, 0.18, 0, frame)
         cv2.rectangle(frame, (px, py), (px + pw, py + ph), (60, 55, 80), 1)
 
-        sign = tracker.current_sign
-        if not sign:
+        stage = tracker.current_stage
+        if not stage:
             return
-
-        # Target letter (large)
-        tl_scale = 3.2
-        (tlw, tlh), _ = cv2.getTextSize(sign.letter, FONT, tl_scale, 4)
+        
+        # Check if current stage is a dynamic sign (define early for use throughout)
+        is_dynamic = hasattr(stage, 'sign_entry') and stage.sign_entry.sign_type.name == "DYNAMIC" if hasattr(stage, 'sign_entry') else False
+        
+        # Target gesture name (large)
+        tl_scale = 1.6  # Smaller scale for better fit
+        (tlw, tlh), _ = cv2.getTextSize(stage.name, FONT, tl_scale, 4)
         tlx = px + (pw - tlw) // 2
-        tly = py + 80
+        tly = py + 45  # Moved up to avoid overlap
         color = GREEN if tracker.state == "CONFIRMING" else ACCENT
-        cv2.putText(frame, sign.letter, (tlx, tly), FONT, tl_scale, color, 4, cv2.LINE_AA)
+        cv2.putText(frame, stage.name, (tlx, tly), FONT, tl_scale, color, 4, cv2.LINE_AA)
 
-        # Sign type badge
-        badge = "DYNAMIC" if sign.sign_type == SignType.DYNAMIC else "STATIC"
-        badge_col = ACCENT2 if sign.sign_type == SignType.DYNAMIC else (60, 180, 100)
+        # Hand shape badge (smaller font)
+        badge = f"Hand: {stage.hand_shape}"
+        badge_col = ACCENT2
         cv2.putText(frame, badge, (px + 8, py + 16), FONT, 0.35, badge_col, 1, cv2.LINE_AA)
 
-        # Description
-        desc_y = py + 105
-        # Wrap if needed
-        words = sign.description.split()
-        line, lines = "", []
-        for w in words:
-            test = line + " " + w if line else w
-            (tw, _), _ = cv2.getTextSize(test, FONT, 0.38, 1)
-            if tw > pw - 16:
-                lines.append(line); line = w
-            else:
-                line = test
-        if line:
-            lines.append(line)
-        for li, l in enumerate(lines[:3]):
-            cv2.putText(frame, l, (px + 8, desc_y + li * 18),
-                        FONT, 0.38, DIM, 1, cv2.LINE_AA)
+        # Movement hint (smaller font)
+        mvmt_y = py + 32
+        mvmt_text = f"Move: {stage.movement}"
+        (mw, _), _ = cv2.getTextSize(mvmt_text, FONT, 0.32, 1)
+        cv2.putText(frame, mvmt_text, (px + 8, mvmt_y), FONT, 0.32, DIM, 1, cv2.LINE_AA)
+        
+        # Dynamic sign stage indicator (for J, Z, etc.)
+        if is_dynamic and hasattr(stage, 'sign_entry'):
+            # Show current stage progress for dynamic signs
+            stage_y = py + 56
+            # Get stage info from dynamic detector if available
+            cv2.putText(frame, f"Stage progress...", (px + 8, stage_y), FONT, 0.28, ACCENT2, 1, cv2.LINE_AA)
 
-        # State hint
+        # Description hint (for letters)
+        if hasattr(stage, 'description') and stage.description:
+            desc_y = py + 48
+            desc_text = stage.description[:28] + "..." if len(stage.description) > 28 else stage.description
+            cv2.putText(frame, desc_text, (px + 8, desc_y), FONT, 0.28, DIM, 1, cv2.LINE_AA)
+
+        # State hint - customize for dynamic signs vs static letters
         state = tracker.state
         hint_y = py + ph - 28
-
-        if sign.sign_type == SignType.DYNAMIC and state != "CONFIRMING":
-            hint = tracker.dynamic_hint
-        elif state == "WAITING":
-            hint = "Show the sign above"
+        
+        if state == "WAITING":
+            if is_dynamic:
+                hint = "Perform the motion"
+            else:
+                hint = "Show the gesture above"
         elif state == "HOLDING":
             pct = int(tracker.progress * 100)
-            hint = f"Hold...  {pct}%"
+            hint = f"Keep going...  {pct}%"
         elif state == "CONFIRMING":
-            hint = "SPACE -> Next sign"
+            hint = "SPACE -> Next gesture"
         else:
             hint = ""
 
@@ -488,68 +536,148 @@ class PlayModeRenderer:
             cv2.putText(frame, hint, (px + 6, hint_y),
                         FONT, 0.36, GOLD, 1, cv2.LINE_AA)
 
-        # Detected letter (small, bottom right of panel)
-        if classifier_result:
-            det = classifier_result.get("letter", "")
-            conf = classifier_result.get("confidence", 0)
-            det_col = GREEN if det == sign.letter else (180, 100, 80)
+        # Detected gesture/letter (small, bottom right of panel)
+        # Show for both gestures and dynamic signs
+        if detection_result and detection_result.sign_name:
+            det = detection_result.sign_name
+            conf = detection_result.confidence
+            det_col = GREEN if det == stage.name else (180, 100, 80)
             cv2.putText(frame, f"Seen: {det} {conf*100:.0f}%", 
                         (px + 6, py + ph - 10), FONT, 0.32, det_col, 1, cv2.LINE_AA)
 
-    def _draw_progress_bar(self, frame, tracker, classifier_result):
+    def _draw_progress_bar(self, frame, tracker, detection_result):
         H, W = frame.shape[:2]
-        bar_h = 12
-        pad = 8
-        # Use only 40% of the available width so the bar is less dominant
-        full_w = W - pad * 2
-        bar_w = max(40, int(full_w * 0.4))
-        # Center the bar horizontally
-        bar_x = (W - bar_w) // 2
-        bar_y = H - bar_h - pad  # pinned to bottom of frame
-        prog = tracker.progress
+        bar_h = 8
+        bar_y = H - 16
 
-        # Background track (narrow centered bar)
-        cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_w, bar_y + bar_h), (35, 30, 48), -1)
-        # Fill (clamped to the centered bar width)
-        if prog > 0:
-            fill = int(bar_w * prog)
-            # guard against any out-of-range values
-            fill = max(0, min(bar_w, fill))
-            col = GREEN if prog >= 1.0 else ORANGE
-            x_end = bar_x + fill
-            x_end = min(x_end, bar_x + bar_w, W)
-            cv2.rectangle(frame, (bar_x, bar_y), (x_end, bar_y + bar_h), col, -1)
+        # Background bar
+        cv2.rectangle(frame, (0, bar_y), (W, bar_y + bar_h), (30, 25, 40), -1)
+
+        # Progress fill
+        if tracker.progress > 0:
+            fill_w = int(W * tracker.progress)
+            col = GREEN if tracker.state == "CONFIRMING" else ACCENT
+            cv2.rectangle(frame, (0, bar_y), (fill_w, bar_y + bar_h), col, -1)
+
         # Border
-        cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_w, bar_y + bar_h), (70, 65, 90), 1)
-        # Label centered above the bar (over the bar, not full window)
-        label = "Hold progress"
-        (lw, _), _ = cv2.getTextSize(label, FONT, 0.32, 1)
-        label_x = bar_x + (bar_w - lw) // 2
-        cv2.putText(frame, label, (label_x, bar_y - 4), FONT, 0.32, DIM, 1, cv2.LINE_AA)
+        cv2.rectangle(frame, (0, bar_y), (W, bar_y + bar_h), (60, 50, 70), 1)
 
-    def _draw_confirm_flash(self, frame, sign):
-        if not sign:
-            return
+    def _draw_confirm_flash(self, frame, stage):
+        """Draws a checkmark overlay when gesture is confirmed."""
         H, W = frame.shape[:2]
+        cx, cy = W // 2, H // 2
+        r = 40
+
+        # Semi-transparent overlay
         overlay = frame.copy()
-        cv2.rectangle(overlay, (0, 0), (W, H), (0, 60, 30), -1)
-        cv2.addWeighted(overlay, 0.25, frame, 0.75, 0, frame)
+        cv2.circle(overlay, (cx, cy), r, (40, 180, 100), -1)
+        cv2.addWeighted(overlay, 0.3, frame, 0.7, 0, frame)
 
-        # Big tick + letter
-        msg = f"{sign.letter}  Correct!"
-        (mw, mh), _ = cv2.getTextSize(msg, FONT, 1.4, 3)
-        cv2.putText(frame, msg, ((W - mw) // 2, H // 2 - 10),
-                    FONT, 1.4, GREEN, 3, cv2.LINE_AA)
-        cv2.putText(frame, "Press SPACE to continue",
-                    ((W - 260) // 2, H // 2 + 40),
-                    FONT, 0.55, GOLD, 1, cv2.LINE_AA)
+        # Checkmark
+        cv2.line(frame, (cx - 15, cy), (cx - 5, cy + 10), WHITE, 4, cv2.LINE_AA)
+        cv2.line(frame, (cx - 5, cy + 10), (cx + 20, cy - 15), WHITE, 4, cv2.LINE_AA)
 
-    def _render_complete(self, frame) -> np.ndarray:
+        # Text
+        txt = f"{stage.name} Done!"
+        (tw, th), _ = cv2.getTextSize(txt, FONT, 0.8, 2)
+        cv2.putText(frame, txt, ((W - tw)//2, cy + r + 30), 
+                    FONT, 0.8, GREEN, 2, cv2.LINE_AA)
+
+    def _render_complete(self, frame):
+        """Renders the completion screen."""
         H, W = frame.shape[:2]
+
+        # Dark overlay
         overlay = frame.copy()
-        overlay[:] = (10, 8, 16)
-        cv2.addWeighted(overlay, 0.85, frame, 0.15, 0, frame)
-        _centered_text(frame, "Level Complete!", H // 2 - 40, 1.6, GREEN, 3)
-        _centered_text(frame, "All signs recognised", H // 2 + 20, 0.7, ACCENT, 1)
-        _centered_text(frame, "Press ESC to return to menu", H // 2 + 60, 0.5, DIM, 1)
+        cv2.rectangle(overlay, (0, 0), (W, H), (10, 8, 15), -1)
+        cv2.addWeighted(overlay, 0.75, frame, 0.25, 0, frame)
+
+        # Title
+        _centered_text(frame, "All Gestures Complete!", H // 2 - 40, 1.0, GOLD, 2)
+
+        # Subtitle
+        sub = "You learned all 9 ASL gestures!"
+        (sw, _), _ = cv2.getTextSize(sub, FONT, 0.5, 1)
+        cv2.putText(frame, sub, ((W - sw)//2, H // 2 + 10), 
+                    FONT, 0.5, WHITE, 1, cv2.LINE_AA)
+
+        # Instruction
+        inst = "Press SPACE to restart"
+        (iw, _), _ = cv2.getTextSize(inst, FONT, 0.45, 1)
+        cv2.putText(frame, inst, ((W - iw)//2, H // 2 + 50),
+                    FONT, 0.45, DIM, 1, cv2.LINE_AA)
+
         return frame
+
+
+# ---------------------------------------------------------------------------
+# Play Mode - Main controller
+# ---------------------------------------------------------------------------
+
+class PlayMode:
+    """
+    Main play mode controller that ties together:
+    - GestureDetector for detection
+    - StageTracker for stage progression
+    - PlayModeRenderer for UI
+    """
+
+    def __init__(self, hand_tracker=None, face_tracker=None, W=640, H=480):
+        # Initialize gesture detector
+        self.gesture_detector = GestureDetector(
+            hand_tracker=hand_tracker,
+            face_tracker=face_tracker,
+            confidence_threshold=0.7
+        )
+        
+        # Initialize stage tracker with gesture stages
+        self.stage_tracker = StageTracker(GESTURE_STAGES)
+        
+        # Initialize renderer
+        self.renderer = PlayModeRenderer(W, H)
+        
+        # State
+        self._hand_detected = False
+
+    def update(self, frame: np.ndarray, hand_detected: bool = False) -> np.ndarray:
+        """
+        Process a frame and return the rendered UI.
+        
+        Args:
+            frame: Input frame in RGB format
+            hand_detected: Whether a hand was detected in the frame
+            
+        Returns:
+            Rendered frame with UI overlays
+        """
+        self._hand_detected = hand_detected
+        
+        # Update gesture detector with new frame
+        self.gesture_detector.update(frame)
+        
+        # Get detection result - pass target gesture for focused detection
+        target_gesture = self.stage_tracker.current_stage.name if self.stage_tracker.current_stage else None
+        detection_result = self.gesture_detector.detect(target_gesture)
+        
+        # Update stage tracker
+        self.stage_tracker.update(detection_result)
+        
+        # Render the frame
+        rendered = self.renderer.render(
+            camera_frame=frame,
+            stage_tracker=self.stage_tracker,
+            detection_result=detection_result,
+            fps=30.0,  # Would be calculated in real app
+            hand_detected=hand_detected
+        )
+        
+        return rendered
+
+    def handle_event(self, event_type, data=None):
+        """Handle input events."""
+        self.renderer.handle_event(event_type, data, self.stage_tracker)
+
+    def reset(self):
+        """Reset the play mode to start over."""
+        self.stage_tracker = StageTracker(GESTURE_STAGES)
+        self.renderer.preview_box.reset()

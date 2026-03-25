@@ -90,8 +90,8 @@ SIGN_REGISTRY: List[SignEntry] = [
     SignEntry("W", SignType.STATIC,  "Three fingers up spread",           enabled=True),
     SignEntry("X", SignType.STATIC,  "Index finger hooked",               enabled=True),
     SignEntry("Y", SignType.STATIC,  "Thumb + pinky out",                 enabled=True),
-            # --- not yet implemented — will be skipped in play mode ---
-    SignEntry("Z", SignType.DYNAMIC, "Index traces a Z in the air",       enabled=False),
+    # Dynamic sign Z
+    SignEntry("Z", SignType.DYNAMIC, "Index traces a Z in the air"),
 ]
 
 # Convenience: only the enabled signs, in order
