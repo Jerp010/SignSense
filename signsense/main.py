@@ -64,7 +64,7 @@ from detector.asl_classifier_letters import ASLClassifierLetters
 from utils.smoothing                 import PredictionSmoother
 from ui.overlay                      import Overlay, SignHoldTimer
 from ui.menu                         import MainMenu, LevelSelect, DebugMenu, RecordMenu
-from ui.play_mode                    import PlayModeRenderer, StageTracker, GESTURE_STAGES, LetterStage
+from ui.play_mode                    import PlayMode, PlayModeRenderer, StageTracker, GESTURE_STAGES, LetterStage
 from signs.sign_registry             import ACTIVE_SIGNS, SignType
 
 # Global detector cache for model reuse
@@ -331,32 +331,23 @@ def run_play_mode(level_id: str, W=640, H=480) -> str:
     with TimingContext("Initialize play mode detectors and components"):
         hand_tracker, face_tracker, classifier = initialize_detectors()
         
-        # Select stages based on level_id
-        if level_id == "gestures":
-            # Level 2: Gesture-based detection
-            gesture_detector = GestureDetector(
-                hand_tracker=hand_tracker,
-                face_tracker=face_tracker,
-                confidence_threshold=0.7
-            )
-            stage_tracker = StageTracker(GESTURE_STAGES)
-            renderer = PlayModeRenderer(W, H)
-            use_gesture_mode = True
-        else:
-            # Level 1: Letter-based detection (default)
-            from signsense.signs.sign_registry import ACTIVE_SIGNS
-            from signsense.signs.dynamic_sign_factory import DynamicSignFactory
-            # Convert SignEntry objects to LetterStage for proper .name attribute access
-            letter_stages = [LetterStage(s) for s in ACTIVE_SIGNS]
-            stage_tracker = StageTracker(letter_stages)
-            # Initialize dynamic sign detectors for J and Z
-            dynamic_detectors = {}
-            for letter in ['J', 'Z']:
-                if DynamicSignFactory.has_trained_model(letter):
-                    dynamic_detectors[letter] = DynamicSignFactory.create_detector(letter)
-            logger.info(f"Initialized dynamic detectors for: {list(dynamic_detectors.keys())}")
-            renderer = PlayModeRenderer(W, H)
-            use_gesture_mode = False
+        # Map level_id to PlayMode mode
+        mode = "gesture" if level_id == "gestures" else "letter"
+        
+        # Create PlayMode instance with appropriate mode
+        play_mode = PlayMode(
+            mode=mode,
+            hand_tracker=hand_tracker,
+            face_tracker=face_tracker,
+            W=W,
+            H=H
+        )
+        
+        # For letter mode, we need to set the classifier
+        if mode == "letter":
+            play_mode.classifier = classifier
+        
+        use_gesture_mode = (mode == "gesture")
     
     # Open camera synchronously (more reliable)
     cam_start_time = time.perf_counter()
@@ -373,7 +364,7 @@ def run_play_mode(level_id: str, W=640, H=480) -> str:
     )
     
     if use_gesture_mode:
-        log_success(f"Play mode initialized with {len(GESTURE_STAGES)} gestures")
+        log_success(f"Play mode initialized with {play_mode.stage_tracker.total_stages} gestures")
     else:
         from signsense.signs.sign_registry import ACTIVE_SIGNS
         log_success(f"Play mode initialized with {len(ACTIVE_SIGNS)} letters")
@@ -404,69 +395,50 @@ def run_play_mode(level_id: str, W=640, H=480) -> str:
             hand_data = hand_tracker.process_frame(rgb)
             hand_detected = hand_data is not None
 
-            # --- Gesture detection -----------------------------------------
-            if use_gesture_mode:
-                # Level 2: Gesture detection
-                gesture_detector.update(rgb)
-                # Pass current target gesture for focused detection
-                current_gesture = stage_tracker.current_stage.name if stage_tracker.current_stage else None
-                detection_result = gesture_detector.detect(current_gesture)
-                # --- Stage update -------------------------------------------
-                confirmed = stage_tracker.update(detection_result)
-            else:
-                # Level 1: Letter detection using classifier + dynamic detectors for J/Z
-                letter_result = None
-                detection_result = None
-                
+            # --- Detection and stage update -----------------------------------
+            letter_result = None
+            if not use_gesture_mode and hand_data is not None:
+                # Letter mode: use classifier
                 try:
-                    if hand_data is not None:
-                        # Get current stage letter to check if it's a dynamic sign
-                        current_stage = stage_tracker.current_stage
-                        current_letter = current_stage.name if current_stage else None
-                        
-                        # Check if this is a dynamic sign (J or Z)
-                        if current_letter and current_letter in dynamic_detectors:
-                            # Use dynamic detector for J/Z
-                            # Dynamic signs require hold, not auto-complete
-                            handedness = hand_data.get('handedness', None)
-                            landmarks = hand_data.get('landmarks', [])
-                            if landmarks:
-                                detector = dynamic_detectors.get(current_letter)
-                                if detector:
-                                    detector.update(landmarks, handedness)
-                                    # Only set detection result if we're in progress
-                                    # This requires user to hold the gesture through all stages
-                                    stage_info = detector.stage_info
-                                    # Show detection if we've progressed beyond initial stage
-                                    # and haven't completed yet (user needs to hold to complete)
-                                    if stage_info['current_stage'] >= 0 and not stage_info.get('phase_complete'):
-                                        detection_result = type('DetectionResult', (), {
-                                            'sign_name': current_letter,
-                                            'confidence': stage_info.get('confidence', 0.5),
-                                            'is_gesture': False
-                                        })()
-                        else:
-                            # Use static classifier for regular letters
-                            # Pass target_letter for optimized scoring in play mode
-                            target_letter = current_letter if current_letter and current_letter not in ['J', 'Z'] else None
-                            landmarks = hand_data.get('landmarks', [])
-                            handedness = hand_data.get('handedness', None)
-                            if landmarks:
-                                letter_result = classifier.classify(landmarks, handedness=handedness, target_letter=target_letter)
-                            if letter_result and letter_result.get('letter'):
-                                detection_result = type('DetectionResult', (), {
-                                    'sign_name': letter_result['letter'],
-                                    'confidence': letter_result.get('confidence', 0.7),
-                                    'is_gesture': False
-                                })()
+                    current_stage = play_mode.stage_tracker.current_stage
+                    current_letter = current_stage.name if current_stage else None
+                    
+                    # Check if this is a dynamic sign (J or Z)
+                    if current_letter and current_letter in ['J', 'Z']:
+                        # Dynamic signs are handled by StageTracker._load_detector()
+                        # Just pass None for classifier_result
+                        letter_result = None
+                    else:
+                        # Use static classifier for regular letters
+                        target_letter = current_letter if current_letter else None
+                        landmarks = hand_data.get('landmarks', [])
+                        handedness = hand_data.get('handedness', None)
+                        if landmarks:
+                            letter_result = classifier.classify(landmarks, handedness=handedness, target_letter=target_letter)
                 except Exception as e:
                     logger.error(f"Detection error: {e}")
                     import traceback
                     traceback.print_exc()
-                # --- Stage update -------------------------------------------
-                confirmed = stage_tracker.update(detection_result)
+            
+            # Update PlayMode with frame and detection data
+            output = play_mode.update(
+                rgb,
+                hand_detected=hand_detected,
+                hand_data=hand_data,
+                classifier_result=letter_result
+            )
+            
+            # Check if stage was confirmed
+            confirmed = False
+            if play_mode.stage_tracker.state == "CONFIRMING":
+                # Check if we just entered CONFIRMING state
+                if hasattr(play_mode.stage_tracker, '_confirm_time'):
+                    confirm_age = time.time() - play_mode.stage_tracker._confirm_time
+                    if confirm_age < 0.1:  # Just confirmed
+                        confirmed = True
+            
             if confirmed:
-                stage = stage_tracker.current_stage
+                stage = play_mode.stage_tracker.current_stage
                 name = stage.name if stage else "?"
                 logger.info(f"Confirmed gesture {name} at frame {frame_num}")
                 perf_tracker.record_timing("gesture_confirm", 0.0)  # marker, zero duration
@@ -490,9 +462,7 @@ def run_play_mode(level_id: str, W=640, H=480) -> str:
             else:
                 display_frame = frame
 
-            output = renderer.render(
-                display_frame, stage_tracker, detection_result,
-                fps, hand_detected)
+            # output is already computed by play_mode.update() above
             try:
                 cv2.imshow(WIN, output)
             except Exception as e:
@@ -506,17 +476,26 @@ def run_play_mode(level_id: str, W=640, H=480) -> str:
             if key == 27:   # ESC
                 logger.info("ESC pressed, exiting play mode")
                 return "menu"
+            if key == ord('f') or key == ord('F'):
+                # Toggle fullscreen
+                prop = cv2.getWindowProperty(WIN, cv2.WND_PROP_FULLSCREEN)
+                if prop == cv2.WINDOW_FULLSCREEN:
+                    cv2.setWindowProperty(WIN, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
+                    logger.info("Exited fullscreen mode")
+                else:
+                    cv2.setWindowProperty(WIN, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+                    logger.info("Entered fullscreen mode")
             if key != 255:
-                renderer.handle_event("key", key, stage_tracker)
+                play_mode.handle_event("key", key)
 
             if _mouse_event:
                 et, data = _mouse_event
                 _mouse_event = None
-                renderer.handle_event(et, data, stage_tracker)
+                play_mode.handle_event(et, data)
 
-            if stage_tracker.is_complete:
+            if play_mode.stage_tracker.is_complete:
                 # Show completion screen until ESC
-                comp = renderer.render(frame, stage_tracker,
+                comp = play_mode.renderer.render(frame, play_mode.stage_tracker,
                                        None, fps, False)
                 cv2.imshow(WIN, comp)
                 while True:

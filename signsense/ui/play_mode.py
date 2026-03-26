@@ -1,12 +1,14 @@
 """
 ui/play_mode.py
 ===============
-Play mode for SignSense - Gesture-based version.
+Play mode for SignSense - Unified version.
 
-Manages per-gesture stage progression using 9 ASL signs:
-  HELLO, THANK YOU, NAME, GOOD, HELP, WATER, YES, NO, BAD
+Manages per-sign stage progression supporting both:
+  - Letter-based signs (A-Z) from sign_registry with STATIC/DYNAMIC types
+  - Gesture-based signs (HELLO, THANK YOU, etc.) from gesture_definitions
 
-User must hold each gesture for HOLD_SECONDS to complete a stage.
+Static signs: user must hold for HOLD_SECONDS
+Dynamic signs: dedicated detector fires on completion
 
 Layout
 ------
@@ -22,9 +24,9 @@ Layout
   └─────────────────────────────────────────┘
 
 The preview box sits in the bottom-right corner and cycles through up to
-3 placeholder images (or real images when assets/signs/<GESTURE>/ is populated).
+3 placeholder images (or real images when assets/signs/<LETTER>/ is populated).
 
-Only the 9 defined gestures appear as stages.
+Supports both letter-based (A-Z) and gesture-based stages.
 """
 
 import cv2
@@ -47,6 +49,17 @@ from signsense.signs.gesture_definitions import (
 )
 from signsense.detector.gesture_detector import GestureDetector, DetectionResult
 
+# Import sign registry for letter-based signs
+from signsense.signs.sign_registry import (
+    ACTIVE_SIGNS,
+    SignType,
+    SignEntry,
+    get_sign
+)
+
+# Import dynamic sign detector
+from signsense.signs.dynamic_signs import get_detector
+
 
 # ---------------------------------------------------------------------------
 # Gesture stage list - the 9 ASL gestures
@@ -67,6 +80,12 @@ class GestureStage:
         return self.name
     
     @property
+    def sign_type(self) -> str:
+        """Return sign type as string: STATIC or DYNAMIC."""
+        # All current gestures are hold-based (STATIC)
+        return "STATIC"
+    
+    @property
     def hand_shape(self) -> str:
         return self.gesture.hand_shape.value
     
@@ -83,10 +102,11 @@ class GestureStage:
 class LetterStage:
     """Represents a letter stage in the game (Level 1)."""
     
-    def __init__(self, sign_entry):
+    def __init__(self, sign_entry: SignEntry):
         self.sign_entry = sign_entry
         self.name = sign_entry.letter
         self.description = sign_entry.description
+        self.letter = sign_entry.letter
     
     @property
     def display_name(self) -> str:
@@ -94,12 +114,17 @@ class LetterStage:
         return self.name
     
     @property
+    def sign_type(self) -> str:
+        """Return sign type as string: STATIC or DYNAMIC."""
+        return self.sign_entry.sign_type.name
+    
+    @property
     def hand_shape(self) -> str:
-        return "static" if self.sign_entry.sign_type.name == "STATIC" else "dynamic"
+        return "static" if self.sign_type == "STATIC" else "dynamic"
     
     @property
     def movement(self) -> str:
-        return "hold" if self.sign_entry.sign_type.name == "STATIC" else "motion"
+        return "hold" if self.sign_type == "STATIC" else "motion"
 
 
 # Create ordered list of gesture stages
@@ -202,8 +227,16 @@ class PreviewBox:
 
         # Try to load a real image (check assets/signs/<GESTURE>/)
         loaded = False
-        # For now, we don't have gesture-specific images, so show placeholder
-        # Path would be: f"assets/signs/{gesture_name}/view_{self._page + 1}.png"
+        img_path = f"signsense/assets/signs/{gesture_name}/view_{self._page + 1}.png"
+        try:
+            real_img = cv2.imread(img_path)
+            if real_img is not None:
+                # Resize to fit preview box
+                resized = cv2.resize(real_img, (self.W - 4, self.H - 20))
+                img[10:self.H - 10, 2:self.W - 2] = resized
+                loaded = True
+        except Exception:
+            pass
         
         if not loaded:
             self._draw_placeholder(img, gesture_name)
@@ -263,6 +296,8 @@ class StageTracker:
         self._state         = "WAITING"
         self._hold_start    = None
         self._confirm_time  = None
+        self._dynamic_det   = None  # Dynamic detector for DYNAMIC signs
+        self._load_detector()
 
     # -- public read --------------------------------------------------------
 
@@ -296,12 +331,43 @@ class StageTracker:
     def is_complete(self) -> bool:
         return self._state == "COMPLETE"
 
+    @property
+    def dynamic_hint(self) -> str:
+        """Return dynamic detector stage label if available."""
+        if self._dynamic_det:
+            return self._dynamic_det.stage_label
+        return ""
+
+    def _load_detector(self):
+        """Load dynamic detector for current stage if needed."""
+        stage = self.current_stage
+        if stage and hasattr(stage, 'sign_type') and stage.sign_type == "DYNAMIC":
+            if hasattr(stage, 'letter'):
+                # Letter-based dynamic sign - use DynamicSignFactory for trained/hardcoded support
+                from signsense.signs.dynamic_sign_factory import DynamicSignFactory
+                self._dynamic_det = DynamicSignFactory.create_detector(stage.letter)
+                if self._dynamic_det:
+                    logger.debug(f"Loaded dynamic detector for {stage.letter}")
+                else:
+                    logger.warning(f"No dynamic detector available for {stage.letter}")
+        else:
+            if self._dynamic_det:
+                logger.debug("Clearing dynamic detector")
+            self._dynamic_det = None
+
     # -- main update --------------------------------------------------------
 
-    def update(self, detection_result: Optional[DetectionResult]) -> bool:
+    def update(self, detection_result: Optional[DetectionResult] = None,
+               landmarks=None, handedness=None) -> bool:
         """
-        Call every frame with gesture detection result.
-        Returns True the moment the current gesture is confirmed (advance ready).
+        Call every frame with detection result.
+        
+        Args:
+            detection_result: Either DetectionResult (gesture) or dict with "letter" key
+            landmarks: Hand landmarks for dynamic detection
+            handedness: Hand handedness for dynamic detection
+            
+        Returns True the moment the current sign is confirmed (advance ready).
         """
         try:
             # track state transitions for logging
@@ -314,28 +380,55 @@ class StageTracker:
                     logger.debug(f"StageTracker state change {prev_state} -> {self._state}")
                 return False
 
-            # Get detected gesture name
-            detected_name = detection_result.sign_name if detection_result else None
-            detected_conf = detection_result.confidence if detection_result else 0.0
+            # Handle dynamic signs
+            if hasattr(stage, 'sign_type') and stage.sign_type == "DYNAMIC":
+                if self._dynamic_det is None:
+                    logger.warning(f"Dynamic detector unavailable for '{stage.name}'")
+                    return False
+                if self._state == "CONFIRMING":
+                    return False  # waiting for user to press Next
+                done = self._dynamic_det.update(landmarks, handedness)
+                if done:
+                    self._state        = "CONFIRMING"
+                    self._confirm_time = time.time()
+                    logger.info(f"Dynamic sign '{stage.name}' detected, entering CONFIRMING")
+                    if prev_state != self._state:
+                        logger.debug(f"StageTracker state change {prev_state} -> {self._state}")
+                    return True
+                return False
 
-            # Check if detected gesture matches current target
+            # Handle static signs (both letter and gesture)
+            detected_name = None
+            detected_conf = 0.0
+            
+            if detection_result:
+                if hasattr(detection_result, 'sign_name'):
+                    # Gesture detection format
+                    detected_name = detection_result.sign_name
+                    detected_conf = detection_result.confidence
+                elif isinstance(detection_result, dict) and "letter" in detection_result:
+                    # Letter detection format
+                    detected_name = detection_result["letter"]
+                    detected_conf = detection_result.get("confidence", 0.0)
+
+            # Check if detected sign matches current target
             correct = (detected_name == stage.name)
 
             if self._state == "WAITING":
                 if correct:
                     self._state      = "HOLDING"
                     self._hold_start = time.time()
-                    logger.info(f"Gesture '{stage.name}' detected, starting hold")
+                    logger.info(f"Sign '{stage.name}' detected, starting hold")
 
             elif self._state == "HOLDING":
                 if not correct:
-                    # Lost the gesture — restart hold
+                    # Lost the sign — restart hold
                     self._state      = "WAITING"
                     self._hold_start = None
                 elif self.progress >= 1.0:
                     self._state        = "CONFIRMING"
                     self._confirm_time = time.time()
-                    logger.info(f"Gesture '{stage.name}' confirmed!")
+                    logger.info(f"Sign '{stage.name}' confirmed!")
                     return True
 
             elif self._state == "CONFIRMING":
@@ -343,21 +436,23 @@ class StageTracker:
 
             # log any state change that occurred during this update
             if self._state != prev_state:
-                logger.debug(f"StageTracker state change {prev_state} -> {self._state} (gesture={stage.name if stage else None})")
+                logger.debug(f"StageTracker state change {prev_state} -> {self._state} (sign={stage.name if stage else None})")
         except Exception as e:
             logger.error(f"StageTracker.update error: {e}")
             import traceback
             traceback.print_exc()
+            # Return False to indicate no confirmation - don't crash the app
         
         return False
 
     def advance(self):
-        """Move to the next gesture. Called when user presses SPACE / Next."""
+        """Move to the next sign. Called when user presses SPACE / Next."""
         self._idx  += 1
-        logger.info(f"Advancing to next gesture ({self.stage_num}/{self.total_stages})")
+        logger.info(f"Advancing to next sign ({self.stage_num}/{self.total_stages})")
         self._state = "WAITING"
         self._hold_start   = None
         self._confirm_time = None
+        self._load_detector()
 
 
 # ---------------------------------------------------------------------------
@@ -384,7 +479,10 @@ class PlayModeRenderer:
         """
         w = frame_w if frame_w is not None else self.W
         h = frame_h if frame_h is not None else self.H
-        return (w - PreviewBox.W - 8, h - PreviewBox.H - 8)
+        # Position on right side, vertically centered
+        bx = w - PreviewBox.W - 8
+        by = (h - PreviewBox.H) // 2
+        return (bx, by)
 
     def handle_event(self, event_type, data=None, stage_tracker=None):
         bx, by = self.get_preview_box_origin()
@@ -451,6 +549,11 @@ class PlayModeRenderer:
         fps_txt = f"FPS {fps:.0f}"
         (fw, _), _ = cv2.getTextSize(fps_txt, FONT, 0.45, 1)
         cv2.putText(frame, fps_txt, (W - fw - 8, 20), FONT, 0.45, DIM, 1, cv2.LINE_AA)
+        
+        # Fullscreen hint
+        fs_hint = "Press F for fullscreen"
+        (fh_w, _), _ = cv2.getTextSize(fs_hint, FONT, 0.35, 1)
+        cv2.putText(frame, fs_hint, (W - fh_w - 8, 36), FONT, 0.35, DIM, 1, cv2.LINE_AA)
 
         # Hand status dot
         dot_color = GREEN if hand_detected else RED_COL
@@ -484,17 +587,14 @@ class PlayModeRenderer:
         is_dynamic = hasattr(stage, 'sign_entry') and stage.sign_entry.sign_type.name == "DYNAMIC" if hasattr(stage, 'sign_entry') else False
         
         # Target gesture name (large)
-        tl_scale = 1.6  # Smaller scale for better fit
-        (tlw, tlh), _ = cv2.getTextSize(stage.name, FONT, tl_scale, 4)
+        # Use smaller font for dynamic signs (J, Z) to avoid oversized display
+        tl_scale = 1.2 if is_dynamic else 1.6
+        tl_thickness = 3 if is_dynamic else 4
+        (tlw, tlh), _ = cv2.getTextSize(stage.name, FONT, tl_scale, tl_thickness)
         tlx = px + (pw - tlw) // 2
-        tly = py + 45  # Moved up to avoid overlap
+        tly = py + 35  # Moved up to avoid overlap
         color = GREEN if tracker.state == "CONFIRMING" else ACCENT
-        cv2.putText(frame, stage.name, (tlx, tly), FONT, tl_scale, color, 4, cv2.LINE_AA)
-
-        # Hand shape badge (smaller font)
-        badge = f"Hand: {stage.hand_shape}"
-        badge_col = ACCENT2
-        cv2.putText(frame, badge, (px + 8, py + 16), FONT, 0.35, badge_col, 1, cv2.LINE_AA)
+        cv2.putText(frame, stage.name, (tlx, tly), FONT, tl_scale, color, tl_thickness, cv2.LINE_AA)
 
         # Movement hint (smaller font)
         mvmt_y = py + 32
@@ -511,7 +611,7 @@ class PlayModeRenderer:
 
         # Description hint (for letters)
         if hasattr(stage, 'description') and stage.description:
-            desc_y = py + 48
+            desc_y = py + 60  # Moved below sign name
             desc_text = stage.description[:28] + "..." if len(stage.description) > 28 else stage.description
             cv2.putText(frame, desc_text, (px + 8, desc_y), FONT, 0.28, DIM, 1, cv2.LINE_AA)
 
@@ -617,21 +717,49 @@ class PlayModeRenderer:
 class PlayMode:
     """
     Main play mode controller that ties together:
-    - GestureDetector for detection
+    - GestureDetector for detection (gesture mode)
+    - ASLClassifierLetters for detection (letter mode)
     - StageTracker for stage progression
     - PlayModeRenderer for UI
+    
+    Supports two modes:
+    - "gesture": 9 ASL gestures (HELLO, THANK YOU, etc.)
+    - "letter": A-Z letters from sign_registry with dynamic support
     """
 
-    def __init__(self, hand_tracker=None, face_tracker=None, W=640, H=480):
-        # Initialize gesture detector
-        self.gesture_detector = GestureDetector(
-            hand_tracker=hand_tracker,
-            face_tracker=face_tracker,
-            confidence_threshold=0.7
-        )
+    def __init__(self, mode="gesture", hand_tracker=None, face_tracker=None, W=640, H=480):
+        """
+        Args:
+            mode: "gesture" for 9 ASL gestures, "letter" for A-Z letters
+            hand_tracker: HandTracker instance (optional, will create if None)
+            face_tracker: FaceTracker instance (optional, will create if None)
+            W: Window width
+            H: Window height
+        """
+        self.mode = mode
         
-        # Initialize stage tracker with gesture stages
-        self.stage_tracker = StageTracker(GESTURE_STAGES)
+        if mode == "gesture":
+            # Use gesture-based stages
+            from signsense.signs.gesture_definitions import GESTURE_REGISTRY, get_all_gestures
+            stages = [GestureStage(g) for g in get_all_gestures().values()]
+            self.gesture_detector = GestureDetector(
+                hand_tracker=hand_tracker,
+                face_tracker=face_tracker,
+                confidence_threshold=0.7
+            )
+            self.classifier = None
+        elif mode == "letter":
+            # Use letter-based stages from ACTIVE_SIGNS
+            from signsense.signs.sign_registry import ACTIVE_SIGNS
+            stages = [LetterStage(s) for s in ACTIVE_SIGNS]
+            self.gesture_detector = None
+            # Classifier will be initialized lazily or passed in
+            self.classifier = None
+        else:
+            raise ValueError(f"Unknown mode: {mode}. Use 'gesture' or 'letter'.")
+        
+        # Initialize stage tracker with appropriate stages
+        self.stage_tracker = StageTracker(stages)
         
         # Initialize renderer
         self.renderer = PlayModeRenderer(W, H)
@@ -639,28 +767,45 @@ class PlayMode:
         # State
         self._hand_detected = False
 
-    def update(self, frame: np.ndarray, hand_detected: bool = False) -> np.ndarray:
+    def update(self, frame: np.ndarray, hand_detected: bool = False,
+               hand_data: dict = None, classifier_result: dict = None) -> np.ndarray:
         """
         Process a frame and return the rendered UI.
         
         Args:
             frame: Input frame in RGB format
             hand_detected: Whether a hand was detected in the frame
+            hand_data: Hand tracking data (for letter mode)
+            classifier_result: Classifier result (for letter mode)
             
         Returns:
             Rendered frame with UI overlays
         """
         self._hand_detected = hand_detected
         
-        # Update gesture detector with new frame
-        self.gesture_detector.update(frame)
+        detection_result = None
         
-        # Get detection result - pass target gesture for focused detection
-        target_gesture = self.stage_tracker.current_stage.name if self.stage_tracker.current_stage else None
-        detection_result = self.gesture_detector.detect(target_gesture)
+        if self.mode == "gesture":
+            # Gesture mode: use GestureDetector
+            if self.gesture_detector:
+                self.gesture_detector.update(frame)
+                # Get detection result - pass target gesture for focused detection
+                target_gesture = self.stage_tracker.current_stage.name if self.stage_tracker.current_stage else None
+                detection_result = self.gesture_detector.detect(target_gesture)
+        elif self.mode == "letter":
+            # Letter mode: use classifier result passed from main loop
+            if classifier_result and classifier_result.get('letter'):
+                detection_result = type('DetectionResult', (), {
+                    'sign_name': classifier_result['letter'],
+                    'confidence': classifier_result.get('confidence', 0.7),
+                    'is_gesture': False
+                })()
         
-        # Update stage tracker
-        self.stage_tracker.update(detection_result)
+        # Update stage tracker with detection result
+        # For dynamic signs, pass landmarks and handedness
+        landmarks = hand_data.get('landmarks', []) if hand_data else None
+        handedness = hand_data.get('handedness', None) if hand_data else None
+        self.stage_tracker.update(detection_result, landmarks=landmarks, handedness=handedness)
         
         # Render the frame
         rendered = self.renderer.render(
@@ -679,5 +824,14 @@ class PlayMode:
 
     def reset(self):
         """Reset the play mode to start over."""
-        self.stage_tracker = StageTracker(GESTURE_STAGES)
+        if self.mode == "gesture":
+            from signsense.signs.gesture_definitions import get_all_gestures
+            stages = [GestureStage(g) for g in get_all_gestures().values()]
+        elif self.mode == "letter":
+            from signsense.signs.sign_registry import ACTIVE_SIGNS
+            stages = [LetterStage(s) for s in ACTIVE_SIGNS]
+        else:
+            stages = GESTURE_STAGES
+        
+        self.stage_tracker = StageTracker(stages)
         self.renderer.preview_box.reset()
