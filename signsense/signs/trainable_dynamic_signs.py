@@ -17,13 +17,15 @@ from typing import Optional
 from pathlib import Path
 import torch
 import numpy as np
+import math
 
 # Add parent to path for imports
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from signsense.ml.dynamic_model import load_dynamic_model
+from signsense.ml.dynamic_model_enhanced import load_enhanced_dynamic_model as load_dynamic_model
 from signsense.config.dynamic_config import get_config, SignConfig
+import warnings
 
 
 class TrainedDynamicDetector:
@@ -62,12 +64,20 @@ class TrainedDynamicDetector:
         self._stage_confidence = 0.0
         self._final_stage_hold = 0
         self._consecutive_stage_preds = 0  # Track consecutive predictions for validation
+        self._visited_stages = set()  # Track which stages have been visited
+        self._last_landmarks = None  # Store previous frame landmarks for movement detection
+        self._movement_history = []  # Track movement between frames
+        self._static_pose_frames = 0  # Count frames with minimal movement
         
         self._load_model()
     
     def _load_model(self) -> None:
         """Load trained model checkpoint."""
-        model_path = self.model_dir / f"dynamic_{self.sign_name}.pt"
+        # Try enhanced model first (preferred), then fall back to basic
+        model_path = self.model_dir / f"dynamic_{self.sign_name}_enhanced.pt"
+        
+        if not model_path.exists():
+            model_path = self.model_dir / f"dynamic_{self.sign_name}.pt"
         
         if not model_path.exists():
             print(
@@ -79,11 +89,13 @@ class TrainedDynamicDetector:
             return
         
         try:
-            model, normaliser, num_stages = load_dynamic_model(
-                str(model_path),
-                self.sign_name,
-                device=self._device
-            )
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                model, normaliser, num_stages = load_dynamic_model(
+                    str(model_path),
+                    self.sign_name,
+                    device=self._device
+                )
             self._model = model
             self._normaliser = normaliser
             self._num_stages = num_stages
@@ -117,6 +129,11 @@ class TrainedDynamicDetector:
         self._stage_confidence = 0.0
         self._final_stage_hold = 0
         self._final_stage_hold = 0
+        self._visited_stages = set()  # Track which stages have been visited
+        self._last_landmarks = None  # Store previous frame landmarks for movement detection
+        self._movement_history = []  # Track movement between frames
+        self._static_pose_frames = 0  # Count frames with minimal movement
+        self._frames_since_completion = 0  # Cooldown counter
     
     @property
     def stage_info(self) -> dict:
@@ -130,6 +147,35 @@ class TrainedDynamicDetector:
             'final_stage_hold': getattr(self, '_final_stage_hold', 0)
         }
     
+    def _calculate_movement(self, current_landmarks, previous_landmarks) -> float:
+        """
+        Calculate the movement/distance between two sets of landmarks.
+        
+        Args:
+            current_landmarks: Current frame landmarks (21 points)
+            previous_landmarks: Previous frame landmarks (21 points)
+        
+        Returns:
+            Average Euclidean distance between corresponding landmarks
+        """
+        if previous_landmarks is None or current_landmarks is None:
+            return 0.0
+        
+        if len(current_landmarks) < 21 or len(previous_landmarks) < 21:
+            return 0.0
+        
+        total_distance = 0.0
+        for i in range(21):
+            # Calculate Euclidean distance for each landmark
+            dx = current_landmarks[i].x - previous_landmarks[i].x
+            dy = current_landmarks[i].y - previous_landmarks[i].y
+            dz = getattr(current_landmarks[i], 'z', 0.0) - getattr(previous_landmarks[i], 'z', 0.0)
+            distance = math.sqrt(dx*dx + dy*dy + dz*dz)
+            total_distance += distance
+        
+        # Return average distance across all landmarks
+        return total_distance / 21.0
+
     def update(self, landmarks, handedness: Optional[str]) -> bool:
         """
         Update detector with new frame.
@@ -170,7 +216,18 @@ class TrainedDynamicDetector:
                 seq_tensor = torch.from_numpy(frame_sequence[np.newaxis, :, :]).float()
                 seq_tensor = seq_tensor.to(self._device)
                 
-                stage_logits, transition_probs = self._model(seq_tensor)
+                model_output = self._model(seq_tensor)
+                
+                # Handle both basic model (2 outputs) and enhanced model (3 outputs)
+                if isinstance(model_output, tuple):
+                    if len(model_output) == 3:
+                        stage_logits, transition_probs, confidence_scores = model_output
+                    else:
+                        stage_logits, transition_probs = model_output
+                else:
+                    stage_logits = model_output
+                    transition_probs = None
+                
                 # stage_logits: [1, seq_len, num_stages]
                 # Get prediction for LAST frame in sequence
                 last_frame_logits = stage_logits[0, -1, :]
@@ -178,7 +235,7 @@ class TrainedDynamicDetector:
                 # Get current stage
                 predicted_stage = last_frame_logits.argmax().item()
                 stage_confidence = torch.softmax(last_frame_logits, dim=0)[predicted_stage].item()
-                transition_confidence = transition_probs[0, -1, 0].item()
+                transition_confidence = transition_probs[0, -1, 0].item() if transition_probs is not None else 0.5
         
         except Exception as e:
             print(f"[TrainedDynamicDetector] Error in update: {e}")
@@ -187,6 +244,24 @@ class TrainedDynamicDetector:
         
         # Update stage tracking
         self._stage_confidence = stage_confidence
+        
+        # Calculate movement between frames for validation
+        current_movement = self._calculate_movement(landmarks, self._last_landmarks)
+        self._movement_history.append(current_movement)
+        
+        # Keep only recent movement history (last 30 frames)
+        if len(self._movement_history) > 30:
+            self._movement_history = self._movement_history[-30:]
+        
+        # Detect static pose (minimal movement)
+        movement_threshold = 0.01  # Threshold for detecting movement
+        if current_movement < movement_threshold:
+            self._static_pose_frames += 1
+        else:
+            self._static_pose_frames = 0
+        
+        # Update last landmarks for next frame's movement calculation
+        self._last_landmarks = landmarks
         
         # ENFORCE SEQUENTIAL STAGE PROGRESSION
         # Only allow progression to the next sequential stage (current + 1)
@@ -207,6 +282,8 @@ class TrainedDynamicDetector:
                 # For simple models, jump directly to final stage
                 if self._current_stage < self._num_stages - 1:
                     print(f"[{self.sign_name}] Simple model: advancing to final stage (conf={stage_confidence:.2f})")
+                    # Track that we've visited the current stage before advancing
+                    self._visited_stages.add(self._current_stage)
                     self._current_stage = self._num_stages - 1
                     self._stage_frames = 0
                     self._consecutive_stage_preds = 0
@@ -231,6 +308,8 @@ class TrainedDynamicDetector:
                 if predicted_stage == expected_next_stage:
                     # Valid sequential progression
                     print(f"[{self.sign_name}] Stage {self._current_stage} → {predicted_stage} (sequential, conf={stage_confidence:.2f})")
+                    # Track that we've visited the current stage before advancing
+                    self._visited_stages.add(self._current_stage)
                     self._current_stage = predicted_stage
                     self._stage_frames = 0  # Reset timeout counter
                     self._consecutive_stage_preds = 0  # Reset consistency counter
@@ -241,6 +320,8 @@ class TrainedDynamicDetector:
                 else:
                     # Regression (e.g., 2→1) - allow it but reset hold counter
                     print(f"[{self.sign_name}] Stage {self._current_stage} → {predicted_stage} (regression)")
+                    # Track that we've visited the current stage before regressing
+                    self._visited_stages.add(self._current_stage)
                     self._current_stage = predicted_stage
                     self._stage_frames = 0  # Reset timeout counter
                     self._consecutive_stage_preds = 0  # Reset consistency counter
@@ -261,22 +342,51 @@ class TrainedDynamicDetector:
             # Need to hold final stage for minimum frames before completing
             min_hold_frames = 10  # ~0.3 seconds at 30fps
             if self._final_stage_hold >= min_hold_frames:
-                # Check cooldown to prevent consecutive confirmations
-                # This prevents the detector from confirming on every frame after completion
-                frames_since_last_completion = getattr(self, '_frames_since_completion', 0)
-                cooldown_frames = 30  # ~1 second cooldown at 30fps
+                # VALIDATE MOVEMENT: Check that user actually moved through stages
+                # For simple-type models, we only require visiting the final stage
+                # For multi-stage models, we require visiting all stages
+                is_simple_type = hasattr(self._config, 'is_simple') and self._config.is_simple
                 
-                if frames_since_last_completion >= cooldown_frames:
-                    self._phase_complete = True
-                    print(f"[{self.sign_name}] Sign complete! ✓ (held {self._final_stage_hold} frames)")
-                    # Reset detector after completion to prevent repeated confirmations
-                    self.reset()
-                    # Set cooldown counter
-                    self._frames_since_completion = 0
-                    return True
+                if is_simple_type:
+                    # Simple model: only require being at final stage (already there)
+                    all_stages_visited = True
                 else:
-                    # Still in cooldown period - don't confirm yet
-                    self._frames_since_completion = frames_since_last_completion + 1
+                    # Multi-stage model: require visiting all stages
+                    all_stages_visited = len(self._visited_stages) >= self._num_stages - 1
+                
+                # 2. Check for movement between stages (not just static pose)
+                # Calculate average movement over recent frames
+                avg_movement = sum(self._movement_history[-10:]) / len(self._movement_history[-10:]) if self._movement_history else 0.0
+                has_movement = avg_movement > 0.015  # Increased minimum movement threshold - requires more deliberate motion
+                
+                # 3. Check that user is not static in final position
+                not_static_in_final = self._static_pose_frames < 15  # Less than 15 frames of static pose
+                
+                # Only allow completion if all validation criteria are met
+                if all_stages_visited and has_movement and not_static_in_final:
+                    # Check cooldown to prevent consecutive confirmations
+                    frames_since_last_completion = getattr(self, '_frames_since_completion', 0)
+                    cooldown_frames = 30  # ~1 second cooldown at 30fps
+                    
+                    if frames_since_last_completion >= cooldown_frames:
+                        self._phase_complete = True
+                        print(f"[{self.sign_name}] Sign complete! ✓ (held {self._final_stage_hold} frames, visited {len(self._visited_stages)}/{self._num_stages} stages, movement={avg_movement:.4f})")
+                        # Reset detector after completion to prevent repeated confirmations
+                        self.reset()
+                        # Set cooldown counter
+                        self._frames_since_completion = 0
+                        return True
+                    else:
+                        # Still in cooldown period - don't confirm yet
+                        self._frames_since_completion = frames_since_last_completion + 1
+                else:
+                    # Validation failed - don't complete yet
+                    if not all_stages_visited:
+                        print(f"[{self.sign_name}] Completion blocked: not all stages visited ({len(self._visited_stages)}/{self._num_stages})")
+                    if not has_movement:
+                        print(f"[{self.sign_name}] Completion blocked: insufficient movement (avg={avg_movement:.4f})")
+                    if not not_static_in_final:
+                        print(f"[{self.sign_name}] Completion blocked: static in final position ({self._static_pose_frames} frames)")
             else:
                 # Increment cooldown counter if we're not at final stage
                 if hasattr(self, '_frames_since_completion'):

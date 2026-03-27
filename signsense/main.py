@@ -8,20 +8,24 @@ Application state machine
   MAIN_MENU      Camera OFF.  Show main menu.
   LEVEL_SELECT   Camera OFF.  Show level selection.
   PLAY           Camera ON.   Stage-by-stage sign learning mode.
-  DEBUG          Camera ON.   Raw classifier output with full score bars
-                              (the original prototype view).
+  ABOUT_MENU     Camera OFF.  Show about information with scrollable content.
+  RECORD_MENU    Camera OFF.  Show recording options for data collection.
 
 Transitions
 -----------
   MAIN_MENU  → [Play]        → LEVEL_SELECT
-  MAIN_MENU  → [Debug]       → DEBUG
+  MAIN_MENU  → [About]       → ABOUT_MENU
   MAIN_MENU  → [Quit] / ESC  → exit
 
   LEVEL_SELECT → [letters]   → PLAY  (level_id="letters")
   LEVEL_SELECT → [Back] / ESC → MAIN_MENU
 
+  ABOUT_MENU   → [Back] / ESC → MAIN_MENU
+  ABOUT_MENU   → [Record]     → RECORD_MENU
+
+  RECORD_MENU  → [Back] / ESC → MAIN_MENU
+
   PLAY    ESC                → MAIN_MENU  (camera released)
-  DEBUG   ESC                → MAIN_MENU  (camera released)
 """
 
 import sys
@@ -63,7 +67,8 @@ from detector.gesture_detector       import GestureDetector
 from detector.asl_classifier_letters import ASLClassifierLetters
 from utils.smoothing                 import PredictionSmoother
 from ui.overlay                      import Overlay, SignHoldTimer
-from ui.menu                         import MainMenu, LevelSelect, DebugMenu, RecordMenu
+from ui.menu                         import MainMenu, LevelSelect, AboutMenu, RecordMenu
+from ui.loading                     import LoadingScreen
 from ui.play_mode                    import PlayMode, PlayModeRenderer, StageTracker, GESTURE_STAGES, LetterStage
 from signs.sign_registry             import ACTIVE_SIGNS, SignType
 
@@ -177,15 +182,32 @@ def get_window_size(win_name: str, default_w=640, default_h=480):
 # ---------------------------------------------------------------------------
 
 _mouse_event = None   # (event_type, (x, y))
+_middle_mouse_down = False  # Track middle mouse button state for drag scrolling
 
 def _mouse_cb(event, x, y, flags, param):
-    global _mouse_event
+    global _mouse_event, _middle_mouse_down
     if event == cv2.EVENT_MOUSEMOVE:
-        _mouse_event = ("mouse_move",  (x, y))
+        if _middle_mouse_down:
+            _mouse_event = ("mouse_middle_drag", (x, y))
+        else:
+            _mouse_event = ("mouse_move",  (x, y))
     elif event == cv2.EVENT_LBUTTONDOWN:
         _mouse_event = ("mouse_click", (x, y))
     elif event == cv2.EVENT_LBUTTONUP:
         _mouse_event = ("mouse_release", (x, y))
+    elif event == cv2.EVENT_MOUSEWHEEL:
+        # flags contains the wheel delta (positive = up, negative = down)
+        # On Windows, the delta is directly in flags >> 16
+        delta = flags >> 16
+        _mouse_event = ("mouse_wheel", (delta, x, y))
+    elif event == cv2.EVENT_MBUTTONDOWN:
+        _mouse_event = ("mouse_middle_click", (x, y))
+        _middle_mouse_down = True
+    elif event == cv2.EVENT_MBUTTONUP:
+        _mouse_event = ("mouse_middle_release", (x, y))
+        _middle_mouse_down = False
+    elif event == cv2.EVENT_MBUTTONDBLCLK:
+        _mouse_event = ("mouse_middle_doubleclick", (x, y))
 
 
 # ---------------------------------------------------------------------------
@@ -193,7 +215,7 @@ def _mouse_cb(event, x, y, flags, param):
 # ---------------------------------------------------------------------------
 
 def run_main_menu(W=640, H=480, win_name="SignSense") -> str:
-    """Blocks until user picks an action. Returns 'play'|'debug'|'quit'."""
+    """Blocks until user picks an action. Returns 'play'|'about'|'quit'."""
     menu      = MainMenu(W, H)
     last_size = (W, H)
 
@@ -298,6 +320,43 @@ def run_debug_menu(W=640, H=480) -> str:
 
 
 # ---------------------------------------------------------------------------
+# State: ABOUT MENU  (no camera)
+# ---------------------------------------------------------------------------
+
+def run_about_menu(W=640, H=480) -> str:
+    """Returns 'back' when user closes the about menu."""
+    WIN       = "SignSense"
+    cv2.setMouseCallback(WIN, _mouse_cb)
+    menu      = AboutMenu(W, H)
+    last_size = (W, H)
+
+    global _mouse_event
+    while True:
+        cur_size = get_window_size(WIN, W, H)
+        if cur_size != last_size:
+            menu      = AboutMenu(*cur_size)
+            last_size = cur_size
+
+        frame = menu.render()
+        cv2.imshow(WIN, frame)
+
+        key = cv2.waitKey(16) & 0xFF
+        result = menu.handle_event("key", key)
+        if result:
+            return result
+
+        if _mouse_event:
+            et, data = _mouse_event
+            _mouse_event = None
+            result = menu.handle_event(et, data)
+            if result:
+                return result
+
+        if cv2.getWindowProperty(WIN, cv2.WND_PROP_VISIBLE) < 1:
+            return "back"
+
+
+# ---------------------------------------------------------------------------
 # State: RECORD MENU  (no camera)
 # ---------------------------------------------------------------------------
 
@@ -343,10 +402,32 @@ def run_play_mode(level_id: str, W=640, H=480) -> str:
     # log entry time to track pre‑camera delay
     mode_entry = time.perf_counter()
     log_init("Play mode", f"level={level_id}")
-
+    
+    # Create loading screen
+    loading = LoadingScreen(W, H)
+    WIN = "SignSense"
+    
+    # Show initial loading state
+    loading.update_progress(5, "Initializing...")
+    cv2.imshow(WIN, loading.render())
+    cv2.waitKey(1)
+    
     # Initialize detectors first (parallel)
     with TimingContext("Initialize play mode detectors and components"):
+        # Show loading progress for detector initialization
+        loading.update_progress(20, "Loading hand tracker...")
+        cv2.imshow(WIN, loading.render())
+        cv2.waitKey(1)
+        
         hand_tracker, face_tracker, classifier = initialize_detectors()
+        
+        loading.update_progress(50, "Loading face tracker...")
+        cv2.imshow(WIN, loading.render())
+        cv2.waitKey(1)
+        
+        loading.update_progress(70, "Loading classifier...")
+        cv2.imshow(WIN, loading.render())
+        cv2.waitKey(1)
         
         # Map level_id to PlayMode mode
         mode = "gesture" if level_id == "gestures" else "letter"
@@ -368,13 +449,23 @@ def run_play_mode(level_id: str, W=640, H=480) -> str:
     
     # Open camera synchronously (more reliable)
     cam_start_time = time.perf_counter()
+    
+    loading.update_progress(85, "Opening camera...")
+    cv2.imshow(WIN, loading.render())
+    cv2.waitKey(1)
+    
     cap = open_camera(W, H)
     cam_delay = time.perf_counter() - cam_start_time
     
     if cap is None or not cap.isOpened():
         log_error("Play mode", RuntimeError("camera open failed"))
         return "menu"
-        
+    
+    # Show ready state briefly
+    loading.update_progress(100, "Ready!")
+    cv2.imshow(WIN, loading.render())
+    cv2.waitKey(100)  # Show the ready state for 100ms
+    
     total_startup = time.perf_counter() - mode_entry
     log_success(
         f"Open camera {W}x{H} | delay={cam_delay:.4f}s | startup={total_startup:.4f}s"
@@ -684,21 +775,16 @@ def main():
                 logger.info(f"Main menu action: {action}")
                 if action == "play":
                     state = "LEVEL_SELECT"
-                elif action == "debug":
-                    state = "DEBUG_MENU"
+                elif action == "about":
+                    state = "ABOUT_MENU"
                 else:
                     state = "QUIT"
                 logger.info(f"STATE: {state}")
 
-            elif state == "DEBUG_MENU":
-                action = run_debug_menu(W, H)
-                logger.info(f"Debug menu action: {action}")
-                if action == "record":
-                    state = "RECORD_MENU"
-                elif action in ("train", "back"):
-                    state = "MAIN_MENU"
-                else:
-                    state = "MAIN_MENU"
+            elif state == "ABOUT_MENU":
+                action = run_about_menu(W, H)
+                logger.info(f"About menu action: {action}")
+                state = "MAIN_MENU"
                 logger.info(f"STATE: {state}")
 
             elif state == "RECORD_MENU":
@@ -717,9 +803,9 @@ def main():
                     recorder.run()
                     state = "RECORD_MENU"  # Return to record menu after
                 elif action == "back":
-                    state = "DEBUG_MENU"
+                    state = "MAIN_MENU"
                 else:
-                    state = "DEBUG_MENU"
+                    state = "MAIN_MENU"
                 logger.info(f"STATE: {state}")
 
             elif state == "LEVEL_SELECT":
@@ -736,10 +822,6 @@ def main():
 
             elif state == "PLAY":
                 run_play_mode(_level_id, W, H)
-                state = "MAIN_MENU"
-
-            elif state == "DEBUG":
-                run_debug_mode(W, H)
                 state = "MAIN_MENU"
 
     except KeyboardInterrupt:
