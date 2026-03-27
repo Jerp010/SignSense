@@ -192,7 +192,7 @@ class TrainedDynamicDetector:
         # Only allow progression to the next sequential stage (current + 1)
         # Reject any jumps to non-sequential stages
         # Also require minimum confidence and consistency for valid transitions
-        min_confidence = 0.4  # Lowered to make detection easier
+        min_confidence = 0.4  # Default threshold for stage recognition
         
         if predicted_stage != self._current_stage:
             # Track consecutive predictions for the same stage

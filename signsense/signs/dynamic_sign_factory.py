@@ -17,7 +17,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from signsense.config.dynamic_config import get_config, has_config
-from signsense.signs.dynamic_signs import DynamicDetector, JDetector
+from signsense.signs.dynamic_signs import DynamicDetector, JDetector, ZDetector
 from signsense.signs.trainable_dynamic_signs import TrainedDynamicDetector
 
 
@@ -48,6 +48,21 @@ class DynamicSignFactory:
         config = get_config(sign_name)
         
         if detector_type == "auto" or detector_type == "trained":
+            # Special case: Z uses simplified waypoint detection as primary method
+            # This bypasses the trained model for reliable, fast detection without ML overhead
+            if sign_name == "Z" and detector_type == "auto":
+                # Use hardcoded detector for Z (preferred over trained model)
+                try:
+                    return DynamicSignFactory._create_hardcoded_detector(sign_name)
+                except Exception as e:
+                    print(f"Failed to load hardcoded detector for '{sign_name}': {e}")
+                    # Fall back to trained model if hardcoded fails
+                    try:
+                        return TrainedDynamicDetector(sign_name)
+                    except Exception as e2:
+                        print(f"Failed to load trained detector for '{sign_name}': {e2}")
+                        return None
+            
             try:
                 return TrainedDynamicDetector(sign_name)
             except Exception as e:
@@ -79,6 +94,11 @@ class DynamicSignFactory:
         
         if sign_name == "J":
             return JDetector()
+            
+        # Z uses simplified waypoint-based detection as fallback
+        # This bypasses the trained model for reliable, fast detection
+        elif sign_name == "Z":
+            return ZDetector()
             
         # Add other hardcoded detectors here as needed
         # elif sign_name == "Z":
@@ -119,7 +139,7 @@ class DynamicSignFactory:
             return DynamicSignFactory.has_trained_model(sign_name)
             
         if detector_type == "hardcoded":
-            return sign_name in ["J"]  # Add other hardcoded signs here
+            return sign_name in ["J", "Z"]  # Hardcoded detectors available
             
         if detector_type == "auto":
             return (DynamicSignFactory.detector_type_available(sign_name, "trained") or

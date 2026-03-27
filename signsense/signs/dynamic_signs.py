@@ -7,7 +7,7 @@ Uses configuration from config/dynamic_signs.yaml for flexible
 parameterization of detectors without modifying code.
 """
 
-from typing import Optional, Dict
+from typing import Optional, Dict, Tuple, List
 import math
 
 # Import configuration system - adjust path for module resolution
@@ -190,4 +190,196 @@ def get_detector(letter: str) -> Optional[DynamicDetector]:
     """
     if letter.upper() == 'J':
         return JDetector()
+    if letter.upper() == 'Z':
+        return ZDetector()
     return None
+
+
+class ZDetector(DynamicDetector):
+    """
+    Simplified waypoint-based detector for ASL 'Z'.
+    
+    Uses only 3 essential waypoints to detect the Z stroke pattern:
+    
+    1. START - Top left corner (initial position)
+    2. MIDDLE - Bottom right of first diagonal stroke
+    3. END - Bottom left corner (final position)
+    
+    The Z gesture pattern:
+    - Start at top-left of the drawing area
+    - Move diagonally down-right to bottom-right (first diagonal)
+    - Move horizontally left to bottom-left (horizontal stroke)
+    - The diagonal back to bottom-left is implicit in the endpoint
+    
+    This simplified detector bypasses the trained LSTM model and uses
+    geometric rules for reliable, fast detection without ML overhead.
+    """
+
+    def __init__(self) -> None:
+        self._config = get_config("Z")
+        if self._config is None:
+            raise ValueError("Configuration for sign 'Z' not found in dynamic_signs.yaml")
+        
+        # Phase tracking: 0=waiting for start, 1=tracking first diagonal,
+        #                2=tracking horizontal, 3=detected
+        self._phase = 0
+        self._phase_complete = False
+        
+        # Waypoints
+        self._start_point: Optional[Tuple[float, float]] = None
+        self._middle_point: Optional[Tuple[float, float]] = None
+        self._end_point: Optional[Tuple[float, float]] = None
+        
+        # Timing and validation
+        self._frame_count = 0
+        self._min_diagonal_frames = 3  # Minimum frames for diagonal stroke
+        self._min_horizontal_frames = 2  # Minimum frames for horizontal stroke
+        
+        # Distance thresholds (normalized 0-1 coordinates)
+        self._diagonal_threshold = 0.10  # Minimum diagonal movement
+        self._horizontal_threshold = 0.08  # Minimum horizontal movement
+        self._corner_tolerance = 0.15  # Tolerance for corner positions
+        
+        # Scale factor for distance calculations
+        self._scale = 0.15
+
+    @property
+    def stage_label(self) -> str:
+        """Get current stage label for display."""
+        labels = {
+            0: "Draw Z - Start at top left",
+            1: "Draw diagonal down-right",
+            2: "Draw horizontal to left",
+            3: "Z detected!"
+        }
+        return labels.get(self._phase, f"Stage {self._phase}")
+
+    @property
+    def phase_complete(self) -> bool:
+        """True for exactly one frame when Z is detected."""
+        return self._phase_complete
+
+    def reset(self) -> None:
+        """Reset detector to initial state."""
+        self._phase = 0
+        self._phase_complete = False
+        self._start_point = None
+        self._middle_point = None
+        self._end_point = None
+        self._frame_count = 0
+
+    def update(self, landmarks, handedness: Optional[str]) -> bool:
+        """
+        Update detector state with current hand landmarks.
+        
+        Args:
+            landmarks: List of 21 hand landmarks from MediaPipe
+            handedness: "Left" or "Right" hand
+        
+        Returns:
+            True if Z gesture is complete, False otherwise
+        """
+        self._phase_complete = False
+        self._frame_count += 1
+        
+        if landmarks is None or len(landmarks) < 21:
+            # No hand detected - reset if we haven't completed
+            if self._phase < 3:
+                self.reset()
+            return False
+        
+        # Use index finger tip for drawing detection
+        lm = self._maybe_mirror(landmarks, handedness)
+        index_tip = (lm[8].x, lm[8].y)
+        
+        # Calculate scale from hand size
+        self._scale = math.hypot(lm[0].x - lm[9].x, lm[0].y - lm[9].y) or 0.15
+        
+        # Phase 0: Wait for start at top-left corner
+        if self._phase == 0:
+            # Check if finger is at top-left position (high y = top, low x = left)
+            # In MediaPipe: y=0 is top, y=1 is bottom; x=0 is left, x=1 is right
+            if index_tip[1] < 0.5 and index_tip[0] < 0.4:  # Top-left area
+                self._start_point = index_tip
+                self._phase = 1
+                self._phase_complete = True  # Signal phase transition
+            return False
+        
+        # Phase 1: Track diagonal down-right stroke
+        if self._phase == 1:
+            if self._start_point is None:
+                self._phase = 0
+                return False
+            
+            # Check if we've moved sufficiently down-right
+            dx = index_tip[0] - self._start_point[0]
+            dy = index_tip[1] - self._start_point[1]
+            
+            # Diagonal down-right: dx > 0 (right), dy > 0 (down)
+            if dx > self._diagonal_threshold * 0.5 and dy > self._diagonal_threshold * 0.3:
+                # Validate diagonal direction (roughly 45 degrees)
+                if abs(dx - dy) < self._diagonal_threshold * 2:
+                    self._middle_point = index_tip
+                    self._phase = 2
+                    self._phase_complete = True
+            
+            # Timeout - reset if taking too long
+            if self._frame_count > 60:
+                self.reset()
+            return False
+        
+        # Phase 2: Track horizontal left stroke
+        if self._phase == 2:
+            if self._middle_point is None:
+                self._phase = 1
+                return False
+            
+            # Check if we've moved left enough from middle point
+            dx = self._middle_point[0] - index_tip[0]  # Positive = moved left
+            dy = index_tip[1] - self._middle_point[1]  # Check not moving much vertically
+            
+            # Horizontal left: significant x movement left, minimal y movement
+            if dx > self._horizontal_threshold and abs(dy) < self._horizontal_threshold * 1.5:
+                # Verify we're at bottom-left (y should be > 0.5 for bottom)
+                if index_tip[1] > 0.5:
+                    self._end_point = index_tip
+                    self._phase = 3
+                    self._phase_complete = True
+                    return True  # Z gesture complete!
+            
+            # Timeout - reset if taking too long
+            if self._frame_count > 100:
+                self.reset()
+            return False
+        
+        return False
+
+    @staticmethod
+    def _maybe_mirror(landmarks, handedness):
+        """Mirror landmarks if needed for left-handed users."""
+        if handedness != "Right":
+            return landmarks
+        mirrored = []
+        for pt in landmarks:
+            m = type(pt)()
+            m.x = 1.0 - pt.x
+            m.y = pt.y
+            m.z = getattr(pt, "z", 0)
+            mirrored.append(m)
+        return mirrored
+
+    def get_waypoints(self) -> List[Tuple[float, float]]:
+        """
+        Get the detected waypoints for visualization.
+        
+        Returns:
+            List of (x, y) tuples representing the Z path waypoints
+        """
+        points = []
+        if self._start_point:
+            points.append(self._start_point)
+        if self._middle_point:
+            points.append(self._middle_point)
+        if self._end_point:
+            points.append(self._end_point)
+        return points

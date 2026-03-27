@@ -3,12 +3,12 @@
   "gesture_type": "complex",
   "num_stages": 4,
   "sequences_per_stage": {
-    "0": 5,
-    "1": 5,
-    "2": 5,
-    "3": 5
+    "0": 22,
+    "1": 17,
+    "2": 4,
+    "3": 1
   },
-  "total_sequences": 20,
-  "recorded_at": "2026-03-27T04:33:30.071715",
+  "total_sequences": 44,
+  "recorded_at": "2026-03-27T13:59:54.941751",
   "description": "Letter Z in ASL"
 }

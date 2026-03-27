@@ -128,6 +128,57 @@ class LetterStage:
         return "hold" if self.sign_type == "STATIC" else "motion"
 
 
+class ZSpecialStage:
+    """
+    Represents a special Z educational stage that appears after all regular letters.
+    This stage contains instructional text and a "Finish Game" button instead of
+    actual gesture detection.
+    """
+    
+    def __init__(self):
+        self.name = "Z"
+        self.letter = "Z"
+        self.description = "Special Z Stage - Learn about the motion-based Z sign"
+        self.sign_type = "SPECIAL"  # Different from STATIC/DYNAMIC
+    
+    @property
+    def display_name(self) -> str:
+        return "Z - Motion Sign"
+    
+    @property
+    def hand_shape(self) -> str:
+        return "motion"
+    
+    @property
+    def movement(self) -> str:
+        return "motion"
+    
+    @property
+    def instruction_title(self) -> str:
+        return "Letter Z: Motion-Based Sign"
+    
+    @property
+    def instruction_text(self) -> str:
+        return (
+            "The letter Z is unique among ASL letters because it REQUIRES MOTION.\n\n"
+            "STEP 1: Start with the 'I' handshape (pinky finger pointing up,\n"
+            "        all other fingers curled into palm)\n\n"
+            "STEP 2: While holding the 'I' shape, trace a 'Z' in the air:\n"
+            "        - Draw diagonal line from top-left to bottom-right\n"
+            "        - Then draw horizontal line from right to left\n\n"
+            "This motion-based signing is what makes Z special among the\n"
+            "ASL alphabet - it's the only letter that requires movement!"
+        )
+    
+    @property
+    def button_text(self) -> str:
+        return "Finish Game"
+    
+    @property
+    def short_tip(self) -> str:
+        return "Trace 'Z' in the air with your pinky finger"
+
+
 # Create ordered list of gesture stages
 GESTURE_STAGES: List[GestureStage] = [
     GestureStage(GESTURE_REGISTRY["HELLO"]),
@@ -203,7 +254,7 @@ class PreviewBox:
     Supports dragging to reposition on screen.
     """
 
-    W, H    = 160, 150
+    W, H    = 220, 200  # Larger preview box for better learning support
     PAGES   = 3
 
     def __init__(self):
@@ -220,14 +271,19 @@ class PreviewBox:
         """Set custom position for the preview box."""
         self._pos = (x, y)
 
-    def get_position(self, default_x, default_y):
-        """Get current position (custom or default)."""
+    def get_position(self, default_x=8, default_y=56):
+        """
+        Get current position (custom or default).
+        
+        Default position is top-left corner (x=8, y=56) for levels containing
+        sign information. This provides better visibility than bottom-right.
+        """
         # Only return custom position if it's been explicitly set and is valid
         if self._pos is not None and self._pos[0] is not None:
             # Validate the position is reasonable (positive coordinates)
             if self._pos[0] >= 0 and self._pos[1] >= 0:
                 return self._pos
-        # Otherwise return default position
+        # Otherwise return default position (top-left)
         return (default_x, default_y)
 
     def handle_event(self, event_type, data=None, bx=0, by=0):
@@ -239,34 +295,40 @@ class PreviewBox:
             elif data == ord(',') or data == 0x280000:
                 self._page = (self._page - 1) % self.PAGES
         elif event_type == "mouse_click":
-            mx, my = data[0] - bx, data[1] - by
-            # Check if click is within the preview box bounds for dragging
-            # Allow drag initiation from anywhere in the box (not just arrow zones)
-            if 0 <= mx <= rx and 0 <= my <= ry:
-                self._dragging = True
-                self._drag_offset = (data[0], data[1])  # Store mouse position, not local coords
-                self._pos = (bx, by)  # Start tracking custom position
-            # left arrow zone (only if not in main box area for nav)
-            elif 0 <= mx <= 26 and ry//2 - 16 <= my <= ry//2 + 16:
+            mx, my = data[0], data[1]
+            # Calculate local coordinates relative to box position
+            local_x = mx - bx
+            local_y = my - by
+            
+            # Check left arrow zone FIRST (priority over drag)
+            # Left arrow zone: left 26 pixels, vertically centered
+            if 0 <= local_x <= 26 and ry//2 - 16 <= local_y <= ry//2 + 16:
                 self._page = (self._page - 1) % self.PAGES
-            # right arrow zone
-            elif rx - 26 <= mx <= rx and ry//2 - 16 <= my <= ry//2 + 16:
+                return  # Arrow click takes priority, don't start drag
+            
+            # Check right arrow zone (priority over drag)
+            # Right arrow zone: right 26 pixels, vertically centered
+            elif rx - 26 <= local_x <= rx and ry//2 - 16 <= local_y <= ry//2 + 16:
                 self._page = (self._page + 1) % self.PAGES
+                return  # Arrow click takes priority, don't start drag
+            
+            # Only check for drag if click is in the main body area (not in arrow zones)
+            # Main body area: from x=26 to x=rx-26
+            elif 26 <= local_x <= rx - 26 and 0 <= local_y <= ry:
+                self._dragging = True
+                self._drag_offset = (mx - bx, my - by)
+                self._pos = (bx, by)  # Start tracking custom position
         elif event_type == "mouse_release":
             self._dragging = False
         elif event_type == "mouse_move" and self._dragging and data:
-            # Update position based on mouse movement (clamped to valid range)
+            # Update position based on mouse movement
             mx, my = data[0], data[1]
-            # Calculate new position: current mouse - initial mouse + initial box position
-            # This correctly handles the drag offset
-            if self._pos is not None:
-                new_x = mx - self._drag_offset[0] + self._pos[0]
-                new_y = my - self._drag_offset[1] + self._pos[1]
-            else:
-                new_x, new_y = mx, my
+            # New box position = mouse position - offset within box
+            new_x = mx - self._drag_offset[0]
+            new_y = my - self._drag_offset[1]
             # Clamp position to reasonable bounds
-            new_x = max(-PreviewBox.W + 20, min(new_x, 1000))
-            new_y = max(-PreviewBox.H + 20, min(new_y, 1000))
+            new_x = max(-PreviewBox.W + 20, min(new_x, 2000))
+            new_y = max(-PreviewBox.H + 20, min(new_y, 2000))
             self._pos = (new_x, new_y)
 
     def render(self, gesture_name: str) -> np.ndarray:
@@ -434,6 +496,15 @@ class StageTracker:
                     logger.debug(f"StageTracker state change {prev_state} -> {self._state}")
                 return False
 
+            # Handle ZSpecialStage - special educational level with finish button
+            if hasattr(stage, 'sign_type') and stage.sign_type == "SPECIAL":
+                # ZSpecialStage is always ready for advancement - user clicks Finish button
+                if self._state != "CONFIRMING":
+                    self._state = "CONFIRMING"
+                    self._confirm_time = time.time()
+                    logger.info(f"ZSpecialStage entered CONFIRMING - showing Finish button")
+                return False  # Don't auto-advance - wait for user to click Finish
+
             # Handle dynamic signs
             if hasattr(stage, 'sign_type') and stage.sign_type == "DYNAMIC":
                 if self._dynamic_det is None:
@@ -560,6 +631,7 @@ class PlayModeRenderer:
     def __init__(self, W=640, H=480):
         self.W, self.H   = W, H
         self.preview_box = PreviewBox()
+        self._finish_button_bounds = None  # Bounds for Z special stage finish button
 
 
     def get_preview_box_origin(self, frame_w=None, frame_h=None) -> tuple:
@@ -567,20 +639,23 @@ class PlayModeRenderer:
         Get position for the preview box.
         
         If PreviewBox has a custom position set (dragged by user), use that.
-        Otherwise, use default position on the left side (aligned with sign description panel).
+        Otherwise, use default position (top-left corner at x=8, y=56).
         Pass the live frame dimensions from render() so the box stays
         glued to the position after a window resize.
-        Falls back to stored W/H for mouse hit-testing between frames.
         """
         w = frame_w if frame_w is not None else self.W
         h = frame_h if frame_h is not None else self.H
         
-        # Get custom position from preview box (or default)
-        default_bx, default_by = 8, 56  # Left side position
-        bx, by = self.preview_box.get_position(default_bx, default_by)
+        # Check if user has set a custom position (via dragging)
+        if self.preview_box._pos is not None and self.preview_box._pos[0] is not None:
+            # Use custom position (but clamp to frame bounds)
+            bx, by = self.preview_box._pos
+        else:
+            # Default position: top-left corner (x=8, y=56)
+            bx = 8
+            by = 56
         
         # Clamp to valid bounds - ensure we can actually display the box
-        # bx must be <= w - PreviewBox.W to fit within frame
         max_x = max(0, w - PreviewBox.W)
         max_y = max(0, h - PreviewBox.H)
         bx = min(bx, max_x)
@@ -616,6 +691,20 @@ class PlayModeRenderer:
                 if stage_tracker and stage_tracker._idx > 0:
                     stage_tracker.back()
                     self.preview_box.reset()
+        
+        # Handle mouse click for Finish Game button (ZSpecialStage)
+        if event_type == "mouse_click" and data and stage_tracker:
+            mx, my = data[0], data[1]
+            stage = stage_tracker.current_stage
+            # Check if we're on ZSpecialStage and button bounds are available
+            if hasattr(stage, 'sign_type') and stage.sign_type == "SPECIAL" and self._finish_button_bounds:
+                bx1, by1, bx2, by2 = self._finish_button_bounds
+                if bx1 <= mx <= bx2 and by1 <= my <= by2:
+                    # User clicked the Finish Game button - advance to complete
+                    logger.info("Finish Game button clicked!")
+                    stage_tracker.advance()
+                    self.preview_box.reset()
+                    return
         
         # Handle preview box events
         bx, by = self.get_preview_box_origin()
@@ -656,9 +745,13 @@ class PlayModeRenderer:
         bx = max(0, min(bx, fW - PreviewBox.W))
         by = max(0, min(by, fH - PreviewBox.H))
         
-        preview = self.preview_box.render(
-            stage.name if stage else "?")
-        frame[by:by + PreviewBox.H, bx:bx + PreviewBox.W] = preview
+        # Show preview box for regular letter/gesture stages (they have sign info)
+        # Hide preview box for ZSpecialStage (special educational level has its own panel)
+        stage = stage_tracker.current_stage
+        if not (hasattr(stage, 'sign_type') and stage.sign_type == "SPECIAL"):
+            preview = self.preview_box.render(
+                stage.name if stage else "?")
+            frame[by:by + PreviewBox.H, bx:bx + PreviewBox.W] = preview
 
         # ── Confirming flash ────────────────────────────────────────────────
         if stage_tracker.state == "CONFIRMING":
@@ -716,7 +809,8 @@ class PlayModeRenderer:
 
     def _draw_sign_panel(self, frame, tracker, detection_result):
         H, W = frame.shape[:2]
-        pw, ph = 185, 200
+        # Thinner panel for better visual balance with larger preview box
+        pw, ph = 160, 180  # Reduced width from 185 to 160
         px = W - pw - 8
         py = 56
 
@@ -727,6 +821,11 @@ class PlayModeRenderer:
 
         stage = tracker.current_stage
         if not stage:
+            return
+        
+        # Handle ZSpecialStage - special educational level with instructional text and button
+        if hasattr(stage, 'sign_type') and stage.sign_type == "SPECIAL":
+            self._draw_z_special_panel(frame, px, py, pw, ph, tracker)
             return
         
         # Check if current stage is a dynamic sign (define early for use throughout)
@@ -793,6 +892,50 @@ class PlayModeRenderer:
             det_col = GREEN if det == stage.name else DIM
             cv2.putText(frame, f"Seen: {det} {conf*100:.0f}%", 
                         (px + 6, py + ph - 10), FONT, 0.32, det_col, 1, cv2.LINE_AA)
+
+    def _draw_z_special_panel(self, frame, px, py, pw, ph, tracker):
+        """
+        Draw the Z special educational panel with instructional text and Finish button.
+        Uses the same dimensions as the regular sign panel for visual consistency.
+        """
+        stage = tracker.current_stage
+        if not stage:
+            return
+        
+        # Title
+        title = stage.instruction_title
+        (tw, th), _ = cv2.getTextSize(title, FONT, 0.45, 1)
+        tx = px + (pw - tw) // 2
+        cv2.putText(frame, title, (tx, py + 18), FONT, 0.45, GOLD, 1, cv2.LINE_AA)
+        
+        # Instructional text (multi-line)
+        lines = stage.instruction_text.split('\n')
+        line_y = py + 38
+        for line in lines:
+            cv2.putText(frame, line, (px + 6, line_y), FONT, 0.24, WHITE, 1, cv2.LINE_AA)
+            line_y += 14
+        
+        # Draw Finish Game button
+        btn_w = pw - 16
+        btn_h = 24
+        btn_x = px + 8
+        btn_y = py + ph - btn_h - 6
+        
+        # Button background
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (btn_x, btn_y), (btn_x + btn_w, btn_y + btn_h), GREEN, -1)
+        cv2.addWeighted(overlay, 0.3, frame, 0.7, 0, frame)
+        cv2.rectangle(frame, (btn_x, btn_y), (btn_x + btn_w, btn_y + btn_h), GREEN, 1)
+        
+        # Button text
+        btn_text = stage.button_text
+        (btw, bth), _ = cv2.getTextSize(btn_text, FONT, 0.45, 1)
+        btx = btn_x + (btn_w - btw) // 2
+        bty = btn_y + (btn_h + bth) // 2 - 2
+        cv2.putText(frame, btn_text, (btx, bty), FONT, 0.45, WHITE, 1, cv2.LINE_AA)
+        
+        # Store button bounds for click detection
+        self._finish_button_bounds = (btn_x, btn_y, btn_x + btn_w, btn_y + btn_h)
 
     def _draw_progress_bar(self, frame, tracker, detection_result):
         H, W = frame.shape[:2]
@@ -913,9 +1056,11 @@ class PlayMode:
             )
             self.classifier = None
         elif mode == "letter":
-            # Use letter-based stages from ACTIVE_SIGNS
+            # Use letter-based stages from ACTIVE_SIGNS (Z is excluded - enabled=False)
             from signsense.signs.sign_registry import ACTIVE_SIGNS
             stages = [LetterStage(s) for s in ACTIVE_SIGNS]
+            # Add ZSpecialStage after all regular letters
+            stages.append(ZSpecialStage())
             self.gesture_detector = None
             # Classifier will be initialized lazily or passed in
             self.classifier = None
@@ -1000,6 +1145,8 @@ class PlayMode:
         elif self.mode == "letter":
             from signsense.signs.sign_registry import ACTIVE_SIGNS
             stages = [LetterStage(s) for s in ACTIVE_SIGNS]
+            # Add ZSpecialStage after all regular letters
+            stages.append(ZSpecialStage())
         else:
             stages = GESTURE_STAGES
         
