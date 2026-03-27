@@ -24,7 +24,7 @@ Layout
   └─────────────────────────────────────────┘
 
 The preview box sits in the bottom-right corner and cycles through up to
-3 placeholder images (or real images when assets/signs/<LETTER>/ is populated).
+3 placeholder images (or real images when ASL_Alphabet/<LETTER>/ is populated).
 
 Supports both letter-based (A-Z) and gesture-based stages.
 """
@@ -248,14 +248,15 @@ def _rr(frame, x1, y1, x2, y2, color, thick=-1, r=6):
 class PreviewBox:
     """
     Shows reference images for the current gesture.
-    3 pages cycled by clicking left/right arrows or pressing ← →.
+    Dynamically adjusts pages based on available preview files.
+    Navigation arrows are enabled/disabled based on available files.
 
     If real images don't exist yet, draws a styled placeholder.
     Supports dragging to reposition on screen.
     """
 
     W, H    = 220, 200  # Larger preview box for better learning support
-    PAGES   = 3
+    MAX_PAGES = 3  # Maximum number of preview pages supported
 
     def __init__(self):
         self._page  = 0
@@ -263,9 +264,36 @@ class PreviewBox:
         self._pos = None  # Custom position (x, y) - when None, uses default position
         self._dragging = False
         self._drag_offset = (0, 0)
+        self._available_pages = 1  # Will be updated dynamically
+        self._current_gesture = None
 
     def reset(self):
         self._page = 0
+
+    def _count_available_pages(self, gesture_name: str) -> int:
+        """
+        Count available preview files for a given gesture/letter.
+        
+        Checks for both naming conventions:
+        - view_1.png, view_2.png, view_3.png
+        - {LETTER}_view_1.png, {LETTER}_view_2.png, {LETTER}_view_3.png
+        
+        Returns:
+            Number of available preview pages (1 to MAX_PAGES)
+        """
+        count = 0
+        for page_num in range(1, self.MAX_PAGES + 1):
+            # Check both naming conventions
+            path1 = f"ASL_Alphabet/{gesture_name}/view_{page_num}.png"
+            path2 = f"ASL_Alphabet/{gesture_name}/{gesture_name}_view_{page_num}.png"
+            
+            if Path(path1).exists() or Path(path2).exists():
+                count += 1
+            else:
+                # Stop counting if a page is missing (no gaps allowed)
+                break
+        
+        return max(1, count)  # At least 1 page (placeholder)
 
     def set_position(self, x, y):
         """Set custom position for the preview box."""
@@ -289,36 +317,41 @@ class PreviewBox:
     def handle_event(self, event_type, data=None, bx=0, by=0):
         """bx, by = top-left corner of the preview box on screen."""
         rx, ry = self.W, self.H      # local right/bottom
-        if event_type == "key":
-            if data == ord('.') or data == 0x270000:   # right arrow
-                self._page = (self._page + 1) % self.PAGES
-            elif data == ord(',') or data == 0x280000:
-                self._page = (self._page - 1) % self.PAGES
-        elif event_type == "mouse_click":
-            mx, my = data[0], data[1]
-            # Calculate local coordinates relative to box position
-            local_x = mx - bx
-            local_y = my - by
-            
-            # Check left arrow zone FIRST (priority over drag)
-            # Left arrow zone: left 26 pixels, vertically centered
-            if 0 <= local_x <= 26 and ry//2 - 16 <= local_y <= ry//2 + 16:
-                self._page = (self._page - 1) % self.PAGES
-                return  # Arrow click takes priority, don't start drag
-            
-            # Check right arrow zone (priority over drag)
-            # Right arrow zone: right 26 pixels, vertically centered
-            elif rx - 26 <= local_x <= rx and ry//2 - 16 <= local_y <= ry//2 + 16:
-                self._page = (self._page + 1) % self.PAGES
-                return  # Arrow click takes priority, don't start drag
-            
-            # Only check for drag if click is in the main body area (not in arrow zones)
-            # Main body area: from x=26 to x=rx-26
-            elif 26 <= local_x <= rx - 26 and 0 <= local_y <= ry:
-                self._dragging = True
-                self._drag_offset = (mx - bx, my - by)
-                self._pos = (bx, by)  # Start tracking custom position
-        elif event_type == "mouse_release":
+        
+        # Only process navigation if multiple pages are available
+        if self._available_pages > 1:
+            if event_type == "key":
+                if data == ord('.') or data == 0x270000:   # right arrow
+                    self._page = (self._page + 1) % self._available_pages
+                elif data == ord(',') or data == 0x280000:
+                    self._page = (self._page - 1) % self._available_pages
+            elif event_type == "mouse_click":
+                mx, my = data[0], data[1]
+                # Calculate local coordinates relative to box position
+                local_x = mx - bx
+                local_y = my - by
+                
+                # Check left arrow zone FIRST (priority over drag)
+                # Left arrow zone: left 26 pixels, vertically centered
+                if 0 <= local_x <= 26 and ry//2 - 16 <= local_y <= ry//2 + 16:
+                    self._page = (self._page - 1) % self._available_pages
+                    return  # Arrow click takes priority, don't start drag
+                
+                # Check right arrow zone (priority over drag)
+                # Right arrow zone: right 26 pixels, vertically centered
+                elif rx - 26 <= local_x <= rx and ry//2 - 16 <= local_y <= ry//2 + 16:
+                    self._page = (self._page + 1) % self._available_pages
+                    return  # Arrow click takes priority, don't start drag
+                
+                # Only check for drag if click is in the main body area (not in arrow zones)
+                # Main body area: from x=26 to x=rx-26
+                elif 26 <= local_x <= rx - 26 and 0 <= local_y <= ry:
+                    self._dragging = True
+                    self._drag_offset = (mx - bx, my - by)
+                    self._pos = (bx, by)  # Start tracking custom position
+        
+        # Handle drag events regardless of page count
+        if event_type == "mouse_release":
             self._dragging = False
         elif event_type == "mouse_move" and self._dragging and data:
             # Update position based on mouse movement
@@ -335,9 +368,20 @@ class PreviewBox:
         img = np.zeros((self.H, self.W, 3), dtype=np.uint8)
         img[:] = PANEL_BG
 
-        # Try to load a real image (check assets/signs/<GESTURE>/)
+        # Update available pages count when gesture changes
+        if self._current_gesture != gesture_name:
+            self._current_gesture = gesture_name
+            self._available_pages = self._count_available_pages(gesture_name)
+            # Reset page if current page is out of bounds
+            if self._page >= self._available_pages:
+                self._page = 0
+
+        # Try to load a real image (check ASL_Alphabet/<LETTER>/)
         loaded = False
-        img_path = f"signsense/assets/signs/{gesture_name}/view_{self._page + 1}.png"
+        # Try both naming conventions: view_1.png and {LETTER}_view_1.png
+        img_path = f"ASL_Alphabet/{gesture_name}/view_{self._page + 1}.png"
+        if not Path(img_path).exists():
+            img_path = f"ASL_Alphabet/{gesture_name}/{gesture_name}_view_{self._page + 1}.png"
         try:
             real_img = cv2.imread(img_path)
             if real_img is not None:
@@ -351,17 +395,19 @@ class PreviewBox:
         if not loaded:
             self._draw_placeholder(img, gesture_name)
 
-        # Page indicator dots
-        dot_y = self.H - 10
-        for i in range(self.PAGES):
-            cx = self.W // 2 + (i - self.PAGES // 2) * 14
-            color = ACCENT if i == self._page else DIM
-            cv2.circle(img, (cx, dot_y), 4, color, -1)
+        # Page indicator dots (only show for available pages)
+        if self._available_pages > 1:
+            dot_y = self.H - 10
+            for i in range(self._available_pages):
+                cx = self.W // 2 + (i - self._available_pages // 2) * 14
+                color = ACCENT if i == self._page else DIM
+                cv2.circle(img, (cx, dot_y), 4, color, -1)
 
-        # Left / right arrow buttons
-        mid_y = (self.H - 20) // 2 + 10
-        for ax, ch in [(10, "<"), (self.W - 10, ">")]:
-            cv2.putText(img, ch, (ax - 5, mid_y + 5), FONT, 0.5, DIM, 1, cv2.LINE_AA)
+        # Left / right arrow buttons (only draw if multiple pages available)
+        if self._available_pages > 1:
+            mid_y = (self.H - 20) // 2 + 10
+            for ax, ch in [(10, "<"), (self.W - 10, ">")]:
+                cv2.putText(img, ch, (ax - 5, mid_y + 5), FONT, 0.5, DIM, 1, cv2.LINE_AA)
 
         # Border
         cv2.rectangle(img, (0, 0), (self.W - 1, self.H - 1), ACCENT, 1)
@@ -628,10 +674,45 @@ class PlayModeRenderer:
     Call render() every frame after updating stage_tracker and gesture detector.
     """
 
-    def __init__(self, W=640, H=480):
+    def __init__(self, W=640, H=480, mode="gesture"):
         self.W, self.H   = W, H
+        self.mode = mode  # Store mode for completion message
         self.preview_box = PreviewBox()
         self._finish_button_bounds = None  # Bounds for Z special stage finish button
+
+    def _word_wrap_text(self, text: str, max_width: int, font, font_scale: float, thickness: int) -> list:
+        """
+        Word wrap text to fit within a given width.
+        
+        Args:
+            text: Text to wrap
+            max_width: Maximum width in pixels
+            font: OpenCV font
+            font_scale: Font scale
+            thickness: Line thickness
+            
+        Returns:
+            List of wrapped lines
+        """
+        words = text.split()
+        lines = []
+        current_line = ""
+        
+        for word in words:
+            test_line = current_line + " " + word if current_line else word
+            (text_width, _), _ = cv2.getTextSize(test_line, font, font_scale, thickness)
+            
+            if text_width <= max_width:
+                current_line = test_line
+            else:
+                if current_line:
+                    lines.append(current_line)
+                current_line = word
+        
+        if current_line:
+            lines.append(current_line)
+        
+        return lines if lines else [""]
 
 
     def get_preview_box_origin(self, frame_w=None, frame_h=None) -> tuple:
@@ -730,7 +811,10 @@ class PlayModeRenderer:
         self._draw_hud(frame, stage_tracker, fps, hand_detected)
 
         # ── Sign panel (right side) ─────────────────────────────────────────
-        self._draw_sign_panel(frame, stage_tracker, detection_result)
+        # Skip drawing sign panel for ZSpecialStage (uses centered two-panel layout)
+        stage = stage_tracker.current_stage
+        if not (hasattr(stage, 'sign_type') and stage.sign_type == "SPECIAL"):
+            self._draw_sign_panel(frame, stage_tracker, detection_result)
 
         # ── Full-width progress bar ─────────────────────────────────────────
         self._draw_progress_bar(frame, stage_tracker, detection_result)
@@ -746,16 +830,22 @@ class PlayModeRenderer:
         by = max(0, min(by, fH - PreviewBox.H))
         
         # Show preview box for regular letter/gesture stages (they have sign info)
-        # Hide preview box for ZSpecialStage (special educational level has its own panel)
+        # For ZSpecialStage, draw centered two-panel layout instead
         stage = stage_tracker.current_stage
-        if not (hasattr(stage, 'sign_type') and stage.sign_type == "SPECIAL"):
+        if hasattr(stage, 'sign_type') and stage.sign_type == "SPECIAL":
+            # ZSpecialStage: draw centered sign panel and preview panel
+            self._draw_z_special_stage_centered(frame, stage_tracker)
+        else:
+            # Regular stages: show preview box
             preview = self.preview_box.render(
                 stage.name if stage else "?")
             frame[by:by + PreviewBox.H, bx:bx + PreviewBox.W] = preview
 
         # ── Confirming flash ────────────────────────────────────────────────
+        # Skip confirm flash for ZSpecialStage (obstructs panel text)
         if stage_tracker.state == "CONFIRMING":
-            self._draw_confirm_flash(frame, stage)
+            if not (hasattr(stage, 'sign_type') and stage.sign_type == "SPECIAL"):
+                self._draw_confirm_flash(frame, stage)
 
         # ── Control buttons ─────────────────────────────────────────────────────
         self._draw_control_buttons(frame, stage_tracker)
@@ -856,11 +946,15 @@ class PlayModeRenderer:
             
 
 
-        # Description hint (for letters)
+        # Description hint (for letters) - with word wrapping
         if hasattr(stage, 'description') and stage.description:
             desc_y = py + 68  # 8px top padding added
-            desc_text = stage.description[:28] + "..." if len(stage.description) > 28 else stage.description
-            cv2.putText(frame, desc_text, (px + 8, desc_y), FONT, 0.28, DIM, 1, cv2.LINE_AA)
+            # Word wrap description to fit panel width
+            desc_lines = self._word_wrap_text(stage.description, pw - 16, FONT, 0.28, 1)
+            for i, line in enumerate(desc_lines):
+                # Only draw lines that fit within panel (leave space for state hint)
+                if desc_y + i * 12 < py + ph - 30:
+                    cv2.putText(frame, line, (px + 8, desc_y + i * 12), FONT, 0.28, DIM, 1, cv2.LINE_AA)
 
         # State hint - customize for dynamic signs vs static letters
         state = tracker.state
@@ -896,7 +990,7 @@ class PlayModeRenderer:
     def _draw_z_special_panel(self, frame, px, py, pw, ph, tracker):
         """
         Draw the Z special educational panel with instructional text and Finish button.
-        Uses the same dimensions as the regular sign panel for visual consistency.
+        Centered on screen with preview panel beside it.
         """
         stage = tracker.current_stage
         if not stage:
@@ -904,22 +998,22 @@ class PlayModeRenderer:
         
         # Title
         title = stage.instruction_title
-        (tw, th), _ = cv2.getTextSize(title, FONT, 0.45, 1)
+        (tw, th), _ = cv2.getTextSize(title, FONT, 0.5, 1)
         tx = px + (pw - tw) // 2
-        cv2.putText(frame, title, (tx, py + 18), FONT, 0.45, GOLD, 1, cv2.LINE_AA)
+        cv2.putText(frame, title, (tx, py + 25), FONT, 0.5, GOLD, 1, cv2.LINE_AA)
         
         # Instructional text (multi-line)
         lines = stage.instruction_text.split('\n')
-        line_y = py + 38
+        line_y = py + 50
         for line in lines:
-            cv2.putText(frame, line, (px + 6, line_y), FONT, 0.24, WHITE, 1, cv2.LINE_AA)
-            line_y += 14
+            cv2.putText(frame, line, (px + 10, line_y), FONT, 0.28, WHITE, 1, cv2.LINE_AA)
+            line_y += 18
         
         # Draw Finish Game button
-        btn_w = pw - 16
-        btn_h = 24
-        btn_x = px + 8
-        btn_y = py + ph - btn_h - 6
+        btn_w = pw - 20
+        btn_h = 30
+        btn_x = px + 10
+        btn_y = py + ph - btn_h - 10
         
         # Button background
         overlay = frame.copy()
@@ -929,13 +1023,91 @@ class PlayModeRenderer:
         
         # Button text
         btn_text = stage.button_text
-        (btw, bth), _ = cv2.getTextSize(btn_text, FONT, 0.45, 1)
+        (btw, bth), _ = cv2.getTextSize(btn_text, FONT, 0.5, 1)
         btx = btn_x + (btn_w - btw) // 2
         bty = btn_y + (btn_h + bth) // 2 - 2
-        cv2.putText(frame, btn_text, (btx, bty), FONT, 0.45, WHITE, 1, cv2.LINE_AA)
+        cv2.putText(frame, btn_text, (btx, bty), FONT, 0.5, WHITE, 1, cv2.LINE_AA)
         
         # Store button bounds for click detection
         self._finish_button_bounds = (btn_x, btn_y, btn_x + btn_w, btn_y + btn_h)
+
+    def _draw_z_preview_panel(self, frame, px, py, pw, ph):
+        """
+        Draw preview panel for Z special stage with the Z sign image.
+        Positioned directly beside the sign panel, centered vertically.
+        """
+        # Panel background
+        overlay = frame.copy()
+        _rr(overlay, px, py, px + pw, py + ph, PANEL_BG, -1)
+        cv2.addWeighted(overlay, 0.82, frame, 0.18, 0, frame)
+        cv2.rectangle(frame, (px, py), (px + pw, py + ph), (60, 60, 70), 1)
+        
+        # Try to load Z image
+        # Try both naming conventions: view_1.png and Z_view_1.png
+        img_path = "ASL_Alphabet/Z/view_1.png"
+        if not Path(img_path).exists():
+            img_path = "ASL_Alphabet/Z/Z_view_1.png"
+        try:
+            real_img = cv2.imread(img_path)
+            if real_img is not None:
+                # Resize to fit preview panel (with padding)
+                resized = cv2.resize(real_img, (pw - 8, ph - 8))
+                frame[py+4:py+ph-4, px+4:px+pw-4] = resized
+            else:
+                # Draw placeholder if image not found
+                self._draw_z_placeholder(frame, px, py, pw, ph)
+        except Exception:
+            # Draw placeholder on error
+            self._draw_z_placeholder(frame, px, py, pw, ph)
+
+    def _draw_z_placeholder(self, frame, px, py, pw, ph):
+        """Draw placeholder when Z image is not available."""
+        # Grey inner area
+        cv2.rectangle(frame, (px+4, py+4), (px+pw-4, py+ph-4), (40, 42, 50), -1)
+        # Large Z letter
+        display = "Z"
+        scale = 3.0
+        (tw, th), _ = cv2.getTextSize(display, FONT, scale, 4)
+        tx = px + (pw - tw) // 2
+        ty = py + (ph + th) // 2
+        cv2.putText(frame, display, (tx, ty), FONT, scale, ACCENT, 4, cv2.LINE_AA)
+        # "preview" label
+        cv2.putText(frame, "preview", (px + pw//2 - 28, py + ph - 10), FONT, 0.35, DIM, 1, cv2.LINE_AA)
+
+    def _draw_z_special_stage_centered(self, frame, tracker):
+        """
+        Draw Z special stage with centered two-panel layout:
+        - Sign panel on the left with instructions
+        - Preview panel on the right with Z image
+        Both panels are centered vertically and aligned horizontally.
+        """
+        H, W = frame.shape[:2]
+        
+        # Panel dimensions
+        sign_pw, sign_ph = 280, 320  # Sign panel
+        prev_pw, prev_ph = 220, 200  # Preview panel
+        gap = 20  # Gap between panels
+        
+        # Calculate total width and starting position
+        total_width = sign_pw + gap + prev_pw
+        start_x = (W - total_width) // 2
+        
+        # Vertical center
+        center_y = H // 2
+        
+        # Sign panel position (centered vertically)
+        sign_x = start_x
+        sign_y = center_y - sign_ph // 2
+        
+        # Preview panel position (beside sign panel, centered vertically)
+        prev_x = start_x + sign_pw + gap
+        prev_y = center_y - prev_ph // 2
+        
+        # Draw sign panel
+        self._draw_z_special_panel(frame, sign_x, sign_y, sign_pw, sign_ph, tracker)
+        
+        # Draw preview panel
+        self._draw_z_preview_panel(frame, prev_x, prev_y, prev_pw, prev_ph)
 
     def _draw_progress_bar(self, frame, tracker, detection_result):
         H, W = frame.shape[:2]
@@ -999,13 +1171,20 @@ class PlayModeRenderer:
         cv2.rectangle(overlay, (0, 0), (W, H), (20, 20, 25), -1)
         cv2.addWeighted(overlay, 0.75, frame, 0.25, 0, frame)
 
+        # Title and subtitle based on mode
+        if self.mode == "letter":
+            title = "All Letters Complete!"
+            subtitle = "You learned all 26 ASL letters!"
+        else:  # gesture mode
+            title = "All Gestures Complete!"
+            subtitle = "You learned all 9 ASL gestures!"
+        
         # Title
-        _centered_text(frame, "All Gestures Complete!", H // 2 - 40, 1.0, GOLD, 2)
+        _centered_text(frame, title, H // 2 - 40, 1.0, GOLD, 2)
 
         # Subtitle
-        sub = "You learned all 9 ASL gestures!"
-        (sw, _), _ = cv2.getTextSize(sub, FONT, 0.5, 1)
-        cv2.putText(frame, sub, ((W - sw)//2, H // 2 + 10), 
+        (sw, _), _ = cv2.getTextSize(subtitle, FONT, 0.5, 1)
+        cv2.putText(frame, subtitle, ((W - sw)//2, H // 2 + 10), 
                     FONT, 0.5, WHITE, 1, cv2.LINE_AA)
 
         # Instruction
@@ -1071,7 +1250,7 @@ class PlayMode:
         self.stage_tracker = StageTracker(stages)
         
         # Initialize renderer
-        self.renderer = PlayModeRenderer(W, H)
+        self.renderer = PlayModeRenderer(W, H, mode)
         
         # State
         self._hand_detected = False

@@ -8,7 +8,7 @@ Adding a new sign
 1. Add an entry to SIGN_REGISTRY with the correct SignType.
 2. If it is DYNAMIC, implement a detector in dynamic_signs.py and add it to
    DYNAMIC_DETECTORS at the bottom of this file.
-3. Drop preview images into  assets/signs/<LETTER>/view_1.png  (etc.).
+3. Drop preview images into  ASL_Alphabet/<LETTER>/view_1.png  (etc.).
    Until images exist the UI shows a styled placeholder automatically.
 
 Registry fields
@@ -57,7 +57,7 @@ class SignEntry:
     sign_type:     SignType
     description:   str
     preview_count: int  = 3       # number of view images available
-    preview_dir:   str  = ""      # e.g. "assets/signs/A"
+    preview_dir:   str  = ""      # e.g. "ASL_Alphabet/A"
     enabled:       bool = True
 
 
