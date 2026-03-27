@@ -394,7 +394,7 @@ LEVELS = [
     {"id": "letters", "label": "Level 1 - Letters A-Z",
      "sub": "Learn the ASL alphabet", "enabled": True},
     {"id": "gestures", "label": "Level 2 - ASL Gestures",
-     "sub": "9 essential ASL phrases", "enabled": True},
+     "sub": "5 essential ASL phrases", "enabled": True},
 ]
 
 

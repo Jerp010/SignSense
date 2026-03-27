@@ -63,7 +63,7 @@ from signsense.signs.dynamic_signs import get_detector
 
 
 # ---------------------------------------------------------------------------
-# Gesture stage list - the 9 ASL gestures
+# Gesture stage list - the 5 ASL gestures
 # ---------------------------------------------------------------------------
 
 class GestureStage:
@@ -184,12 +184,8 @@ GESTURE_STAGES: List[GestureStage] = [
     GestureStage(GESTURE_REGISTRY["HELLO"]),
     GestureStage(GESTURE_REGISTRY["THANK YOU"]),
     GestureStage(GESTURE_REGISTRY["NAME"]),
-    GestureStage(GESTURE_REGISTRY["GOOD"]),
-    GestureStage(GESTURE_REGISTRY["HELP"]),
-    GestureStage(GESTURE_REGISTRY["WATER"]),
     GestureStage(GESTURE_REGISTRY["YES"]),
     GestureStage(GESTURE_REGISTRY["NO"]),
-    GestureStage(GESTURE_REGISTRY["BAD"]),
 ]
 
 
@@ -278,16 +274,22 @@ class PreviewBox:
         - view_1.png, view_2.png, view_3.png
         - {LETTER}_view_1.png, {LETTER}_view_2.png, {LETTER}_view_3.png
         
+        Also checks ASL_Gestures directory for gesture signs.
+        
         Returns:
             Number of available preview pages (1 to MAX_PAGES)
         """
         count = 0
         for page_num in range(1, self.MAX_PAGES + 1):
-            # Check both naming conventions
+            # Check both naming conventions for letters
             path1 = f"ASL_Alphabet/{gesture_name}/view_{page_num}.png"
             path2 = f"ASL_Alphabet/{gesture_name}/{gesture_name}_view_{page_num}.png"
             
-            if Path(path1).exists() or Path(path2).exists():
+            # Check ASL_Gestures directory for gestures
+            path3 = f"ASL_Gestures/{gesture_name}/view_{page_num}.png"
+            path4 = f"ASL_Gestures/{gesture_name}/{gesture_name}_view_{page_num}.png"
+            
+            if Path(path1).exists() or Path(path2).exists() or Path(path3).exists() or Path(path4).exists():
                 count += 1
             else:
                 # Stop counting if a page is missing (no gaps allowed)
@@ -376,12 +378,16 @@ class PreviewBox:
             if self._page >= self._available_pages:
                 self._page = 0
 
-        # Try to load a real image (check ASL_Alphabet/<LETTER>/)
+        # Try to load a real image (check ASL_Alphabet/<LETTER>/ and ASL_Gestures/<GESTURE>/)
         loaded = False
         # Try both naming conventions: view_1.png and {LETTER}_view_1.png
         img_path = f"ASL_Alphabet/{gesture_name}/view_{self._page + 1}.png"
         if not Path(img_path).exists():
             img_path = f"ASL_Alphabet/{gesture_name}/{gesture_name}_view_{self._page + 1}.png"
+        if not Path(img_path).exists():
+            img_path = f"ASL_Gestures/{gesture_name}/view_{self._page + 1}.png"
+        if not Path(img_path).exists():
+            img_path = f"ASL_Gestures/{gesture_name}/{gesture_name}_view_{self._page + 1}.png"
         try:
             real_img = cv2.imread(img_path)
             if real_img is not None:
@@ -922,9 +928,18 @@ class PlayModeRenderer:
         is_dynamic = hasattr(stage, 'sign_entry') and stage.sign_entry.sign_type.name == "DYNAMIC" if hasattr(stage, 'sign_entry') else False
         
         # Target gesture name (large)
-        # Use smaller font for dynamic signs (J, Z) to avoid oversized display
-        tl_scale = 1.2 if is_dynamic else 1.6
-        tl_thickness = 3 if is_dynamic else 4
+        # Use smaller font for dynamic signs (J, Z) and gestures (complete words) to avoid oversized display
+        if is_dynamic:
+            tl_scale = 1.0
+            tl_thickness = 2
+        elif hasattr(stage, 'gesture'):
+            # Gesture mode - use smaller font for complete words
+            tl_scale = 0.9
+            tl_thickness = 2
+        else:
+            # Letter mode - use larger font for single letters
+            tl_scale = 1.6
+            tl_thickness = 4
         (tlw, tlh), _ = cv2.getTextSize(stage.name, FONT, tl_scale, tl_thickness)
         tlx = px + (pw - tlw) // 2
         tly = py + 43  # Top padding of 8px added
@@ -932,7 +947,7 @@ class PlayModeRenderer:
         cv2.putText(frame, stage.name, (tlx, tly), FONT, tl_scale, color, tl_thickness, cv2.LINE_AA)
 
         # Movement hint (smaller font)
-        mvmt_y = py + 32
+        mvmt_y = py + 56
         mvmt_text = f"Move: {stage.movement}"
         (mw, _), _ = cv2.getTextSize(mvmt_text, FONT, 0.32, 1)
         cv2.putText(frame, mvmt_text, (px + 8, mvmt_y), FONT, 0.32, DIM, 1, cv2.LINE_AA)
@@ -940,7 +955,7 @@ class PlayModeRenderer:
         # Dynamic sign stage indicator (for J, Z, etc.)
         if is_dynamic and hasattr(stage, 'sign_entry'):
             # Show current stage progress for dynamic signs
-            stage_y = py + 56
+            stage_y = py + 68
             # Get stage info from dynamic detector if available
             cv2.putText(frame, f"Stage progress...", (px + 8, stage_y), FONT, 0.28, ACCENT2, 1, cv2.LINE_AA)
             
@@ -948,17 +963,17 @@ class PlayModeRenderer:
 
         # Description hint (for letters) - with word wrapping
         if hasattr(stage, 'description') and stage.description:
-            desc_y = py + 68  # 8px top padding added
+            desc_y = py + 78  # Increased from 68 to 78 for more spacing
             # Word wrap description to fit panel width
             desc_lines = self._word_wrap_text(stage.description, pw - 16, FONT, 0.28, 1)
             for i, line in enumerate(desc_lines):
                 # Only draw lines that fit within panel (leave space for state hint)
-                if desc_y + i * 12 < py + ph - 30:
-                    cv2.putText(frame, line, (px + 8, desc_y + i * 12), FONT, 0.28, DIM, 1, cv2.LINE_AA)
+                if desc_y + i * 14 < py + ph - 30:  # Increased line spacing from 12 to 14
+                    cv2.putText(frame, line, (px + 8, desc_y + i * 14), FONT, 0.28, DIM, 1, cv2.LINE_AA)
 
         # State hint - customize for dynamic signs vs static letters
         state = tracker.state
-        hint_y = py + ph - 20  # 8px top padding added
+        hint_y = py + ph - 25  # Increased from 20 to 25 for more spacing
         
         if state == "WAITING":
             if is_dynamic:
@@ -1177,7 +1192,7 @@ class PlayModeRenderer:
             subtitle = "You learned all 26 ASL letters!"
         else:  # gesture mode
             title = "All Gestures Complete!"
-            subtitle = "You learned all 9 ASL gestures!"
+            subtitle = "You learned all 5 ASL gestures!"
         
         # Title
         _centered_text(frame, title, H // 2 - 40, 1.0, GOLD, 2)
@@ -1209,14 +1224,14 @@ class PlayMode:
     - PlayModeRenderer for UI
     
     Supports two modes:
-    - "gesture": 9 ASL gestures (HELLO, THANK YOU, etc.)
+    - "gesture": 5 ASL gestures (HELLO, THANK YOU, etc.)
     - "letter": A-Z letters from sign_registry with dynamic support
     """
 
     def __init__(self, mode="gesture", hand_tracker=None, face_tracker=None, W=640, H=480):
         """
         Args:
-            mode: "gesture" for 9 ASL gestures, "letter" for A-Z letters
+            mode: "gesture" for 5 ASL gestures, "letter" for A-Z letters
             hand_tracker: HandTracker instance (optional, will create if None)
             face_tracker: FaceTracker instance (optional, will create if None)
             W: Window width

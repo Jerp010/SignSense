@@ -371,7 +371,7 @@ class ZDetector(DynamicDetector):
     def get_waypoints(self) -> List[Tuple[float, float]]:
         """
         Get the detected waypoints for visualization.
-        
+
         Returns:
             List of (x, y) tuples representing the Z path waypoints
         """
@@ -383,3 +383,609 @@ class ZDetector(DynamicDetector):
         if self._end_point:
             points.append(self._end_point)
         return points
+
+
+# =================== Gesture Detector Classes ===================
+# These detectors implement multi-stage motion patterns for ASL gestures
+# Each gesture follows a pattern: Stage 0 (start) -> Stage 1 (motion) -> Stage 2 (finish)
+
+
+class GestureDetector(DynamicDetector):
+    """Base class for gesture detectors with common helper methods."""
+
+    @staticmethod
+    def _maybe_mirror(landmarks, handedness):
+        """Mirror landmarks if needed for left-handed users."""
+        if handedness != "Right":
+            return landmarks
+        mirrored = []
+        for pt in landmarks:
+            m = type(pt)()
+            m.x = 1.0 - pt.x
+            m.y = pt.y
+            m.z = getattr(pt, "z", 0)
+            mirrored.append(m)
+        return mirrored
+
+
+class HELLODetector(GestureDetector):
+    """
+    Detects ASL 'HELLO' gesture in three stages:
+
+    Stage 0 — HOLD PREP: Hold hand in preparation position near face
+    Stage 1 — TOUCH: Bring hand to forehead (touch gesture)
+    Stage 2 — MOVE OUT: Move hand outward to complete hello
+    """
+
+    def __init__(self) -> None:
+        self._config = get_config("HELLO")
+        if self._config is None:
+            raise ValueError("Configuration for gesture 'HELLO' not found")
+
+        self._phase = 0
+        self._phase_complete = False
+        self._phase_frames = 0
+        self._start_y = 0.0
+        self._finish_count = 0
+        self.reset()
+
+    @property
+    def stage_label(self) -> str:
+        return self._config.stages.get(self._phase, f"Stage {self._phase}")
+
+    @property
+    def phase_complete(self) -> bool:
+        return self._phase_complete
+
+    def reset(self) -> None:
+        self._phase = 0
+        self._phase_complete = False
+        self._phase_frames = 0
+        self._start_y = 0.0
+        self._finish_count = 0
+
+    def update(self, landmarks, handedness: Optional[str]) -> bool:
+        self._phase_complete = False
+
+        if landmarks is None or len(landmarks) < 21:
+            if self._phase == 0:
+                self.reset()
+            return False
+
+        lm = self._maybe_mirror(landmarks, handedness)
+
+        # Stage 0: Hold preparation position near face
+        if self._phase == 0:
+            self._phase_frames += 1
+            # Check if hand is near face (forehead region)
+            # Face is typically in upper portion of frame
+            face_region = lm[5].y < 0.35  # Wrist in upper 35% of frame
+            flat_hand = self._is_flat_hand(lm)
+
+            if face_region and flat_hand:
+                self._phase = 1
+                self._phase_frames = 0
+                self._start_y = lm[20].y
+                self._phase_complete = True  # Ready for touch
+                return False
+
+        # Stage 1: Touch forehead
+        if self._phase == 1:
+            self._phase_frames += 1
+            # Check if hand is touching or near forehead
+            forehead_touch = lm[5].y < 0.3 and lm[20].y < 0.35
+            flat_hand = self._is_flat_hand(lm)
+
+            if forehead_touch and flat_hand:
+                self._phase_frames = 0  # Reset timer while touching
+            else:
+                # Check if we've moved out (complete gesture)
+                if lm[20].y - self._start_y > self._config.detector.move_out_distance:
+                    self._phase = 2
+                    self._finish_count = 0
+                    self._phase_complete = True  # Ready for final hold
+                    return False
+
+            # Timeout
+            if self._phase_frames > self._config.detector.phase_timeout:
+                self.reset()
+                return False
+
+        # Stage 2: Move hand outward
+        if self._phase == 2:
+            self._phase_frames += 1
+            flat_hand = self._is_flat_hand(lm)
+
+            if flat_hand:
+                self._finish_count += 1
+            else:
+                self._finish_count = max(0, self._finish_count - 1)
+
+            if self._finish_count >= self._config.detector.stage_2_hold_frames:
+                self.reset()
+                return True  # HELLO complete
+
+            if self._phase_frames > self._config.detector.phase_timeout:
+                self.reset()
+                return False
+
+        return False
+
+    @staticmethod
+    def _is_flat_hand(lm) -> bool:
+        """Check for flat open hand (all fingers extended)."""
+        # Simple heuristic: fingers not curled
+        return (lm[8].y > lm[6].y and      # index
+                lm[12].y > lm[10].y and     # middle
+                lm[16].y > lm[14].y and     # ring
+                lm[20].y > lm[18])          # pinky
+
+
+class THANK_YOUDetector(GestureDetector):
+    """
+    Detects ASL 'THANK YOU' gesture in three stages:
+
+    Stage 0 — HOLD PREP: Hold hand near chin in preparation
+    Stage 1 — TOUCH CHIN: Place flat hand on chin
+    Stage 2 — MOVE FORWARD: Move hand forward to complete
+    """
+
+    def __init__(self) -> None:
+        self._config = get_config("THANK_YOU")
+        if self._config is None:
+            raise ValueError("Configuration for gesture 'THANK_YOU' not found")
+
+        self._phase = 0
+        self._phase_complete = False
+        self._phase_frames = 0
+        self._start_y = 0.0
+        self._finish_count = 0
+        self.reset()
+
+    @property
+    def stage_label(self) -> str:
+        return self._config.stages.get(self._phase, f"Stage {self._phase}")
+
+    @property
+    def phase_complete(self) -> bool:
+        return self._phase_complete
+
+    def reset(self) -> None:
+        self._phase = 0
+        self._phase_complete = False
+        self._phase_frames = 0
+        self._start_y = 0.0
+        self._finish_count = 0
+
+    def update(self, landmarks, handedness: Optional[str]) -> bool:
+        self._phase_complete = False
+
+        if landmarks is None or len(landmarks) < 21:
+            if self._phase == 0:
+                self.reset()
+            return False
+
+        lm = self._maybe_mirror(landmarks, handedness)
+
+        # Stage 0: Hold preparation position
+        if self._phase == 0:
+            self._phase_frames += 1
+            chin_region = lm[5].y < 0.45  # Wrist in upper portion
+            flat_hand = self._is_flat_hand(lm)
+
+            if chin_region and flat_hand:
+                self._phase = 1
+                self._phase_frames = 0
+                self._start_y = lm[20].y
+                self._phase_complete = True  # Ready for touch
+                return False
+
+        # Stage 1: Touch chin
+        if self._phase == 1:
+            self._phase_frames += 1
+            chin_touch = lm[5].y < 0.42 and lm[20].y < 0.45
+            flat_hand = self._is_flat_hand(lm)
+
+            if chin_touch and flat_hand:
+                self._phase_frames = 0
+            else:
+                if lm[20].y - self._start_y > self._config.detector.move_forward_distance:
+                    self._phase = 2
+                    self._finish_count = 0
+                    self._phase_complete = True  # Ready for final hold
+                    return False
+
+            if self._phase_frames > self._config.detector.phase_timeout:
+                self.reset()
+                return False
+
+        # Stage 2: Move hand forward
+        if self._phase == 2:
+            self._phase_frames += 1
+            flat_hand = self._is_flat_hand(lm)
+
+            if flat_hand:
+                self._finish_count += 1
+            else:
+                self._finish_count = max(0, self._finish_count - 1)
+
+            if self._finish_count >= self._config.detector.stage_2_hold_frames:
+                self.reset()
+                return True  # THANK YOU complete
+
+            if self._phase_frames > self._config.detector.phase_timeout:
+                self.reset()
+                return False
+
+        return False
+
+
+class NAMEDetector(GestureDetector):
+    """
+    Detects ASL 'NAME' gesture in three stages:
+
+    Stage 0 — PREP N-SHAPE: Form N-handshape (index + middle up)
+    Stage 1 — NEAR CHEEK: Move hand near cheek
+    Stage 2 — COMPLETE: Hold completed gesture
+    """
+
+    def __init__(self) -> None:
+        self._config = get_config("NAME")
+        if self._config is None:
+            raise ValueError("Configuration for gesture 'NAME' not found")
+
+        self._phase = 0
+        self._phase_complete = False
+        self._phase_frames = 0
+        self._start_y = 0.0
+        self._finish_count = 0
+        self.reset()
+
+    @property
+    def stage_label(self) -> str:
+        return self._config.stages.get(self._phase, f"Stage {self._phase}")
+
+    @property
+    def phase_complete(self) -> bool:
+        return self._phase_complete
+
+    def reset(self) -> None:
+        self._phase = 0
+        self._phase_complete = False
+        self._phase_frames = 0
+        self._start_y = 0.0
+        self._finish_count = 0
+
+    def update(self, landmarks, handedness: Optional[str]) -> bool:
+        self._phase_complete = False
+
+        if landmarks is None or len(landmarks) < 21:
+            if self._phase == 0:
+                self.reset()
+            return False
+
+        lm = self._maybe_mirror(landmarks, handedness)
+
+        # Stage 0: Prepare N-shape
+        if self._phase == 0:
+            self._phase_frames += 1
+            n_shape = self._is_n_shape(lm)
+            cheek_region = lm[5].y < 0.4  # Near cheek
+
+            if n_shape and cheek_region:
+                self._phase = 1
+                self._phase_frames = 0
+                self._start_y = lm[20].y
+                self._phase_complete = True  # Ready for cheek proximity
+                return False
+
+        # Stage 1: Near cheek
+        if self._phase == 1:
+            self._phase_frames += 1
+            n_shape = self._is_n_shape(lm)
+            cheek_proximity = lm[5].y < 0.38 and lm[20].y < 0.4
+
+            if n_shape and cheek_proximity:
+                self._phase_frames = 0
+            else:
+                if lm[20].y - self._start_y > self._config.detector.cheek_proximity:
+                    self._phase = 2
+                    self._finish_count = 0
+                    self._phase_complete = True  # Ready for final hold
+                    return False
+
+            if self._phase_frames > self._config.detector.phase_timeout:
+                self.reset()
+                return False
+
+        # Stage 2: Complete gesture
+        if self._phase == 2:
+            self._phase_frames += 1
+            n_shape = self._is_n_shape(lm)
+
+            if n_shape:
+                self._finish_count += 1
+            else:
+                self._finish_count = max(0, self._finish_count - 1)
+
+            if self._finish_count >= self._config.detector.stage_2_hold_frames:
+                self.reset()
+                return True  # NAME complete
+
+            if self._phase_frames > self._config.detector.phase_timeout:
+                self.reset()
+                return False
+
+        return False
+
+    @staticmethod
+    def _is_n_shape(lm) -> bool:
+        """Check for N-handshape (index + middle fingers up, others curled)."""
+        return (lm[8].y < lm[6] and      # index up (lower y = higher in image)
+                lm[12].y < lm[10] and     # middle up
+                lm[16].y > lm[14] and     # ring curled down
+                lm[20].y > lm[18])        # pinky curled down
+
+
+class YESDetector(GestureDetector):
+    """
+    Detects ASL 'YES' gesture in three stages:
+
+    Stage 0 — READY: Thumb-up handshape (fist with thumb extended)
+    Stage 1 — UPWARD MOTION: Move hand upward (nod gesture)
+    Stage 2 — COMPLETE: Hold upward position
+    """
+
+    def __init__(self) -> None:
+        self._config = get_config("YES")
+        if self._config is None:
+            raise ValueError("Configuration for gesture 'YES' not found")
+
+        self._phase = 0
+        self._phase_complete = False
+        self._phase_frames = 0
+        self._start_y = 0.0
+        self._finish_count = 0
+        self.reset()
+
+    @property
+    def stage_label(self) -> str:
+        return self._config.stages.get(self._phase, f"Stage {self._phase}")
+
+    @property
+    def phase_complete(self) -> bool:
+        return self._phase_complete
+
+    def reset(self) -> None:
+        self._phase = 0
+        self._phase_complete = False
+        self._phase_frames = 0
+        self._start_y = 0.0
+        self._finish_count = 0
+
+    def update(self, landmarks, handedness: Optional[str]) -> bool:
+        self._phase_complete = False
+
+        if landmarks is None or len(landmarks) < 21:
+            if self._phase == 0:
+                self.reset()
+            return False
+
+        lm = self._maybe_mirror(landmarks, handedness)
+
+        # Stage 0: Ready position with thumb-up
+        if self._phase == 0:
+            self._phase_frames += 1
+            thumb_up = self._is_thumb_up(lm)
+
+            if thumb_up:
+                self._phase = 1
+                self._phase_frames = 0
+                self._start_y = lm[20].y
+                self._phase_complete = True  # Ready for upward motion
+                return False
+
+        # Stage 1: Upward motion
+        if self._phase == 1:
+            self._phase_frames += 1
+            thumb_up = self._is_thumb_up(lm)
+
+            if thumb_up:
+                # Check if moved upward
+                if self._start_y - lm[20].y > self._config.detector.nod_distance:
+                    self._phase = 2
+                    self._finish_count = 0
+                    self._phase_complete = True  # Ready for final hold
+                    return False
+            else:
+                self._finish_count = max(0, self._finish_count - 1)
+
+            if self._finish_count >= self._config.detector.stage_2_hold_frames:
+                self.reset()
+                return True  # YES complete
+
+            if self._phase_frames > self._config.detector.phase_timeout:
+                self.reset()
+                return False
+
+        # Stage 2: Complete gesture
+        if self._phase == 2:
+            self._phase_frames += 1
+            thumb_up = self._is_thumb_up(lm)
+
+            if thumb_up:
+                self._finish_count += 1
+            else:
+                self._finish_count = max(0, self._finish_count - 1)
+
+            if self._finish_count >= self._config.detector.stage_2_hold_frames:
+                self.reset()
+                return True  # YES complete
+
+            if self._phase_frames > self._config.detector.phase_timeout:
+                self.reset()
+                return False
+
+        return False
+
+    @staticmethod
+    def _is_thumb_up(lm) -> bool:
+        """Check for thumb-up handshape (fist with thumb extended)."""
+        # Index curled: tip below PIP joint
+        # Thumb extended: tip above PIP joint (lower y value)
+        return (lm[8].y > lm[6] and           # index curled
+                lm[12].y > lm[10] and          # middle curled
+                lm[16].y > lm[14] and          # ring curled
+                lm[20].y > lm[18] and          # pinky curled
+                lm[2].y < lm[4])               # thumb extended
+
+
+class NO_detector(GestureDetector):
+    """
+    Detects ASL 'NO' gesture in three stages:
+
+    Stage 0 — READY: Index finger extended or head position
+    Stage 1 — SIDE MOTION: Move hand sideways
+    Stage 2 — COMPLETE: Hold side position
+    """
+
+    def __init__(self) -> None:
+        self._config = get_config("NO")
+        if self._config is None:
+            raise ValueError("Configuration for gesture 'NO' not found")
+
+        self._phase = 0
+        self._phase_complete = False
+        self._phase_frames = 0
+        self._start_x = 0.0
+        self._finish_count = 0
+        self.reset()
+
+    @property
+    def stage_label(self) -> str:
+        return self._config.stages.get(self._phase, f"Stage {self._phase}")
+
+    @property
+    def phase_complete(self) -> bool:
+        return self._phase_complete
+
+    def reset(self) -> None:
+        self._phase = 0
+        self._phase_complete = False
+        self._phase_frames = 0
+        self._start_x = 0.0
+        self._finish_count = 0
+
+    def update(self, landmarks, handedness: Optional[str]) -> bool:
+        self._phase_complete = False
+
+        if landmarks is None or len(landmarks) < 21:
+            if self._phase == 0:
+                self.reset()
+            return False
+
+        lm = self._maybe_mirror(landmarks, handedness)
+
+        # Stage 0: Ready position with index finger
+        if self._phase == 0:
+            self._phase_frames += 1
+            index_shape = self._is_index_shape(lm)
+
+            if index_shape:
+                self._phase = 1
+                self._phase_frames = 0
+                self._start_x = lm[8].x
+                self._phase_complete = True  # Ready for side motion
+                return False
+
+        # Stage 1: Side motion
+        if self._phase == 1:
+            self._phase_frames += 1
+            index_shape = self._is_index_shape(lm)
+
+            if index_shape:
+                # Check if moved sideways
+                if abs(lm[8].x - self._start_x) > self._config.detector.shake_distance:
+                    self._phase = 2
+                    self._finish_count = 0
+                    self._phase_complete = True  # Ready for final hold
+                    return False
+            else:
+                self._finish_count = max(0, self._finish_count - 1)
+
+            if self._finish_count >= self._config.detector.stage_2_hold_frames:
+                self.reset()
+                return True  # NO complete
+
+            if self._phase_frames > self._config.detector.phase_timeout:
+                self.reset()
+                return False
+
+        # Stage 2: Complete gesture
+        if self._phase == 2:
+            self._phase_frames += 1
+            index_shape = self._is_index_shape(lm)
+
+            if index_shape:
+                self._finish_count += 1
+            else:
+                self._finish_count = max(0, self._finish_count - 1)
+
+            if self._finish_count >= self._config.detector.stage_2_hold_frames:
+                self.reset()
+                return True  # NO complete
+
+            if self._phase_frames > self._config.detector.phase_timeout:
+                self.reset()
+                return False
+
+        return False
+
+    @staticmethod
+    def _is_index_shape(lm) -> bool:
+        """Check for index finger shape (only index extended)."""
+        # Index up: tip above PIP joint (lower y)
+        # Others curled down
+        return (lm[8].y < lm[6] and              # index up
+                lm[12].y > lm[10] and            # middle curled
+                lm[16].y > lm[14] and            # ring curled
+                lm[20].y > lm[18])               # pinky curled
+
+
+# =================================================================
+# Update factory function to include gesture detectors
+# =================================================================
+
+def get_detector(letter: str, gesture: Optional[str] = None) -> Optional[DynamicDetector]:
+    """
+    Factory function to instantiate the appropriate dynamic detector
+    for a given ASL letter or gesture.
+
+    Args:
+        letter: Single character ASL letter (e.g., 'J') or gesture name
+        gesture: Gesture name (e.g., 'HELLO', 'THANK YOU', 'NAME', 'YES', 'NO')
+
+    Returns:
+        DynamicDetector subclass instance or None
+    """
+    if gesture:
+        # Handle gestures
+        gesture = gesture.upper()
+        if gesture == "HELLO":
+            return HELLODetector()
+        elif gesture == "THANK YOU":
+            return THANK_YOUDetector()
+        elif gesture == "NAME":
+            return NAMEDetector()
+        elif gesture == "YES":
+            return YESDetector()
+        elif gesture == "NO":
+            return NODetector()
+        return None
+
+    # Handle letters
+    if letter.upper() == 'J':
+        return JDetector()
+    if letter.upper() == 'Z':
+        return ZDetector()
+    return None

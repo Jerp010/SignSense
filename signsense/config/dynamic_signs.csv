@@ -19,3 +19,8 @@
 letter,name,type,description,enabled,detector_type,num_stages,min_samples,model_exists,data_path
 J,Letter J,complex,"I shape + pinky traces a J hook",true,auto,3,10,true,ml/data/dynamic/J
 Z,Letter Z,complex,"Index traces a Z in the air",true,auto,4,10,true,ml/data/dynamic/Z
+HELLO,HELLO,complex,"Touch forehead, then move outward with smile",true,auto,3,10,false,ml/data/dynamic/HELLO
+THANK_YOU,THANK YOU,complex,"Flat hand at chin, then move forward",true,auto,3,10,false,ml/data/dynamic/THANK_YOU
+NAME,NAME,complex,"N-handshape near cheek, slight movement",true,auto,3,10,false,ml/data/dynamic/NAME
+YES,YES,complex,"Thumb-up hand or head nod upward",true,auto,3,10,false,ml/data/dynamic/YES
+NO,NO,complex,"Index finger or head shake side-to-side",true,auto,3,10,false,ml/data/dynamic/NO

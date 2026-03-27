@@ -194,7 +194,27 @@ class TrainedDynamicDetector:
         # Also require minimum confidence and consistency for valid transitions
         min_confidence = 0.4  # Default threshold for stage recognition
         
-        if predicted_stage != self._current_stage:
+        # SPECIAL CASE: Simple/single-stage models
+        # For models configured as "simple" type, skip sequential progression enforcement
+        # and allow any stage prediction to complete the sign
+        # This handles cases where a model was trained with multiple stages but is
+        # configured as a simple (single-stage) motion gesture
+        is_simple_type = hasattr(self._config, 'is_simple') and self._config.is_simple
+        
+        if is_simple_type or self._num_stages == 1:
+            # Simple/single-stage model: accept any stage prediction with sufficient confidence
+            if stage_confidence >= min_confidence:
+                # For simple models, jump directly to final stage
+                if self._current_stage < self._num_stages - 1:
+                    print(f"[{self.sign_name}] Simple model: advancing to final stage (conf={stage_confidence:.2f})")
+                    self._current_stage = self._num_stages - 1
+                    self._stage_frames = 0
+                    self._consecutive_stage_preds = 0
+            else:
+                # Low confidence - stay in current stage
+                self._stage_frames += 1
+        elif predicted_stage != self._current_stage:
+            # Multi-stage model: enforce sequential progression
             # Track consecutive predictions for the same stage
             if predicted_stage == getattr(self, '_last_predicted_stage', None):
                 self._consecutive_stage_preds += 1
@@ -241,11 +261,30 @@ class TrainedDynamicDetector:
             # Need to hold final stage for minimum frames before completing
             min_hold_frames = 10  # ~0.3 seconds at 30fps
             if self._final_stage_hold >= min_hold_frames:
-                self._phase_complete = True
-                print(f"[{self.sign_name}] Sign complete! ✓ (held {self._final_stage_hold} frames)")
-                # Reset detector after completion to prevent repeated confirmations
-                self.reset()
-                return True
+                # Check cooldown to prevent consecutive confirmations
+                # This prevents the detector from confirming on every frame after completion
+                frames_since_last_completion = getattr(self, '_frames_since_completion', 0)
+                cooldown_frames = 30  # ~1 second cooldown at 30fps
+                
+                if frames_since_last_completion >= cooldown_frames:
+                    self._phase_complete = True
+                    print(f"[{self.sign_name}] Sign complete! ✓ (held {self._final_stage_hold} frames)")
+                    # Reset detector after completion to prevent repeated confirmations
+                    self.reset()
+                    # Set cooldown counter
+                    self._frames_since_completion = 0
+                    return True
+                else:
+                    # Still in cooldown period - don't confirm yet
+                    self._frames_since_completion = frames_since_last_completion + 1
+            else:
+                # Increment cooldown counter if we're not at final stage
+                if hasattr(self, '_frames_since_completion'):
+                    self._frames_since_completion += 1
+        else:
+            # Increment cooldown counter if we're not at final stage
+            if hasattr(self, '_frames_since_completion'):
+                self._frames_since_completion += 1
         
         # Timeout if stuck in stage too long
         if self._stage_frames > self._config.detector.phase_timeout:

@@ -92,17 +92,13 @@ class DynamicSignFactory:
         """
         sign_name = sign_name.upper()
         
-        if sign_name == "J":
-            return JDetector()
-            
         # Z uses simplified waypoint-based detection as fallback
         # This bypasses the trained model for reliable, fast detection
-        elif sign_name == "Z":
+        if sign_name == "Z":
             return ZDetector()
             
-        # Add other hardcoded detectors here as needed
-        # elif sign_name == "Z":
-        #     return ZDetector()
+        # J now uses trained model (single-stage recording)
+        # No hardcoded detector needed
             
         return None
         
@@ -139,7 +135,7 @@ class DynamicSignFactory:
             return DynamicSignFactory.has_trained_model(sign_name)
             
         if detector_type == "hardcoded":
-            return sign_name in ["J", "Z"]  # Hardcoded detectors available
+            return sign_name in ["Z"]  # Only Z has hardcoded detector (J uses trained model)
             
         if detector_type == "auto":
             return (DynamicSignFactory.detector_type_available(sign_name, "trained") or
@@ -165,6 +161,10 @@ class DynamicSignFactory:
             
         if DynamicSignFactory.detector_type_available(sign_name, "hardcoded"):
             available.append("hardcoded")
+        
+        # J uses trained model only (no hardcoded detector)
+        if sign_name == "J" and "hardcoded" in available:
+            available.remove("hardcoded")
             
         return available
 

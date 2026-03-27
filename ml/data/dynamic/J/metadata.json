@@ -1,13 +1,11 @@
 {
   "sign_name": "J",
-  "gesture_type": "complex",
-  "num_stages": 3,
+  "gesture_type": "simple",
+  "num_stages": 1,
   "sequences_per_stage": {
-    "0": 5,
-    "1": 5,
-    "2": 4
+    "0": 52
   },
-  "total_sequences": 14,
-  "recorded_at": "2026-03-27T03:28:15.140684",
+  "total_sequences": 52,
+  "recorded_at": "2026-03-28T02:10:05.163774",
   "description": "Letter J in ASL"
 }

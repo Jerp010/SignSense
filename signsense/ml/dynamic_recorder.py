@@ -259,18 +259,23 @@ class DynamicSignRecorder:
         self._load_existing_data()
         
         print(f"Gesture: {self.sign_name}")
-        print(f"Mode: {self.gesture_mode}")
+        if self.gesture_mode == "simple":
+            print(f"Mode: SINGLE-STAGE (record complete motion in one go)")
+        else:
+            print(f"Mode: MULTI-STAGE (record each stage separately)")
         if self.existing_sequences:
             print(f"Existing samples: {sum(self.existing_sequences.values())}")
-        print(f"Current stage: {self.current_stage}")
+        if self.gesture_mode == "complex":
+            print(f"Current stage: {self.current_stage}")
     
     def toggle_gesture_mode(self) -> None:
-        """Toggle between simple and complex gesture mode."""
+        """Toggle between single-stage and multi-stage gesture mode."""
         if self.gesture_mode == "simple":
             self.gesture_mode = "complex"
+            print("Gesture mode: MULTI-STAGE (record each stage separately)")
         else:
             self.gesture_mode = "simple"
-        print(f"Gesture mode: {self.gesture_mode}")
+            print("Gesture mode: SINGLE-STAGE (record complete motion in one go)")
     
     def set_stage(self, stage_num: int) -> None:
         """Set current stage number."""
@@ -396,10 +401,10 @@ DYNAMIC GESTURE RECORDER
 Controls:
   T         - Type custom gesture name (e.g., "hello", "thank_you")
   A-Z       - Quick select letter gesture (J, Z, etc.)
-  S         - Toggle simple/complex mode
-  0-9       - Set stage (complex mode only)
+  S         - Toggle single-stage/multi-stage mode
+  0-9       - Set stage (multi-stage mode only)
   SPACE     - Start/stop recording
-  N         - Next stage (complex) / new sequence (simple)
+  N         - Next stage (multi-stage) / new sequence (single-stage)
   Q         - Save and exit
   ESC       - Exit without saving
 ============================================================
@@ -433,9 +438,12 @@ Controls:
                 status = f"Type name: {self.current_text}_"
                 color = (255, 200, 100)
             else:
-                mode_indicator = "[SIMPLE]" if self.gesture_mode == "simple" else "[COMPLEX]"
+                mode_indicator = "[SINGLE-STAGE]" if self.gesture_mode == "simple" else "[MULTI-STAGE]"
                 rec_indicator = "●REC" if self.is_recording else ""
-                status = f"Gesture: {self.sign_name or 'NOT SET'} | {mode_indicator} | Stage: {self.current_stage} | {rec_indicator}"
+                if self.gesture_mode == "simple":
+                    status = f"Gesture: {self.sign_name or 'NOT SET'} | {mode_indicator} | {rec_indicator}"
+                else:
+                    status = f"Gesture: {self.sign_name or 'NOT SET'} | {mode_indicator} | Stage: {self.current_stage} | {rec_indicator}"
                 color = (0, 255, 0) if self.is_recording else (255, 255, 255)
             
             cv2.putText(frame, status, (10, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
@@ -474,7 +482,7 @@ Controls:
                 )
                 info_y += 30
             
-            # Stage info for complex mode
+            # Stage info for complex mode only
             if self.gesture_mode == "complex" and self.sign_name:
                 stage_count = len(self.stage_sequences.get(self.current_stage, []))
                 cv2.putText(
@@ -487,11 +495,28 @@ Controls:
                     1
                 )
                 info_y += 25
+            elif self.gesture_mode == "simple" and self.sign_name:
+                # Show total sequences for simple mode
+                total_sequences = len(self.stage_sequences.get(0, []))
+                cv2.putText(
+                    frame,
+                    f"Total sequences: {total_sequences}",
+                    (10, info_y),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (100, 200, 100),
+                    1
+                )
+                info_y += 25
             
             # Instructions
+            if self.gesture_mode == "simple":
+                instructions = "T: Type name | SPACE: Record | N: New sequence | Q: Save"
+            else:
+                instructions = "T: Type name | SPACE: Record | N: Next stage | Q: Save"
             cv2.putText(
                 frame,
-                "T: Type name | SPACE: Record | N: Next | Q: Save",
+                instructions,
                 (10, h - 20),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.4,

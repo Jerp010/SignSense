@@ -2,25 +2,16 @@
 # Supports both complex (multi-stage) and simple (single-stage) gestures
 
 dynamic_signs:
-  # Complex gestures (multi-stage motion) - like letters J, Z
+  # Simple gesture (single-stage motion) - record entire J motion as one sequence
   J:
-    type: "complex"  # multi-stage motion gesture
+    type: "simple"  # single-stage motion gesture
     description: "Letter J in ASL"
-    detector:
-      i_hold_frames: 6
-      down_threshold: 0.06
-      finish_hold_frames: 8
-      phase_timeout: 70
     training:
       sequence_length: 120
       batch_size: 8
       epochs: 50
       learning_rate: 0.001
       hidden_size: 128
-    stages:
-      0: "Step 1/3 — Hold I (pinky up)"
-      1: "Step 2/3 — Hook pinky DOWN"
-      2: "Step 3/3 — Palm away, hold I"
 
   Z:
     type: "complex"
@@ -41,12 +32,107 @@ dynamic_signs:
       2: "Step 3/4 — Diagonal stroke"
       3: "Step 4/4 — End position"
 
-# Simple gestures (single stage) - can be added dynamically
-# These are stored separately and loaded at runtime
-# Format: GESTURE_NAME:
-#   type: "simple"
-#   description: "Description of gesture"
-#   min_samples: 10  # minimum samples for training
+# Gesture configurations (trainable models like J)
+# Each gesture defines multi-stage motion patterns
+HELLO:
+  type: "complex"
+  description: "Touch forehead, then move outward with smile"
+  detector:
+    stage_1_hold_frames: 5           # Hold 5 frames near face
+    touch_forehead_threshold: 0.15   # Distance from forehead
+    move_out_distance: 0.25          # Move hand outward
+    stage_2_hold_frames: 6           # Hold final position
+    phase_timeout: 60
+  training:
+    sequence_length: 80
+    batch_size: 8
+    epochs: 50
+    learning_rate: 0.001
+    hidden_size: 128
+  stages:
+    0: "Step 1/3 — Hand near face"
+    1: "Step 2/3 — Touch forehead"
+    2: "Step 3/3 — Move outward"
+
+THANK_YOU:
+  type: "complex"
+  description: "Flat hand at chin, then move forward"
+  detector:
+    stage_1_hold_frames: 5
+    chin_position_threshold: 0.15
+    move_forward_distance: 0.25
+    stage_2_hold_frames: 6
+    phase_timeout: 60
+  training:
+    sequence_length: 80
+    batch_size: 8
+    epochs: 50
+    learning_rate: 0.001
+    hidden_size: 128
+  stages:
+    0: "Step 1/3 — Chin position"
+    1: "Step 2/3 — Touch chin"
+    2: "Step 3/3 — Move forward"
+
+NAME:
+  type: "complex"
+  description: "N-handshape near cheek, slight movement"
+  detector:
+    stage_1_hold_frames: 4
+    n_shape_threshold: 0.2
+    cheek_proximity: 0.18
+    stage_2_hold_frames: 6
+    phase_timeout: 50
+  training:
+    sequence_length: 80
+    batch_size: 8
+    epochs: 50
+    learning_rate: 0.001
+    hidden_size: 128
+  stages:
+    0: "Step 1/3 — Prepare N-shape"
+    1: "Step 2/3 — Near cheek"
+    2: "Step 3/3 — Complete sign"
+
+YES:
+  type: "complex"
+  description: "Thumb-up hand or head nod upward"
+  detector:
+    stage_1_hold_frames: 4
+    thumb_up_threshold: 0.15
+    nod_distance: 0.18
+    stage_2_hold_frames: 6
+    phase_timeout: 50
+  training:
+    sequence_length: 80
+    batch_size: 8
+    epochs: 50
+    learning_rate: 0.001
+    hidden_size: 128
+  stages:
+    0: "Step 1/3 — Ready position"
+    1: "Step 2/3 — Upward motion"
+    2: "Step 3/3 — Nod complete"
+
+NO:
+  type: "complex"
+  description: "Index finger or head shake side-to-side"
+  detector:
+    stage_1_hold_frames: 4
+    index_shape_threshold: 0.18
+    shake_distance: 0.2
+    stage_2_hold_frames: 6
+    phase_timeout: 50
+  training:
+    sequence_length: 80
+    batch_size: 8
+    epochs: 50
+    learning_rate: 0.001
+    hidden_size: 128
+  stages:
+    0: "Step 1/3 — Ready position"
+    1: "Step 2/3 — Side motion"
+    2: "Step 3/3 — Shake complete"
 
 # Custom gestures will be automatically added to this config
 # when recording new gestures using the dynamic recorder

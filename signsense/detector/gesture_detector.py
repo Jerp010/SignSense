@@ -1,9 +1,11 @@
 """Gesture detector for ASL signs.
 
-This module implements detection for 9 ASL gesture signs:
-HELLO, THANK YOU, NAME, GOOD, HELP, WATER, YES, NO, BAD
+This module implements detection for 5 ASL gesture signs:
+HELLO, THANK YOU, NAME, YES, NO
 
-Based on anatomical requirements defined in gesture_definitions.py.
+Note: Hand gesture recognition should be trained via the dynamic recorder
+instead of using hardcoded logic. This module retains only essential
+detector functions for face tracking and non-hand-specific input methods.
 """
 
 from typing import Optional, Dict, Any, List, Tuple
@@ -139,11 +141,14 @@ class GestureDetector:
     def single_hand_detect(self, target_gesture: str = None) -> DetectionResult:
         """Detect one-handed signs using dominant hand tracker.
         
+        Note: This method is deprecated. Hand gesture recognition should be
+        trained via the dynamic recorder instead of using hardcoded logic.
+        
         Args:
             target_gesture: Optional target gesture name for focused detection.
                            If provided, only checks for that gesture (play mode optimization).
         
-        Signs: HELLO, THANK YOU, NAME, GOOD, HELP, WATER, BAD
+        Signs: HELLO, THANK YOU, NAME, YES, NO
         
         Returns:
             DetectionResult for one-handed signs
@@ -220,6 +225,9 @@ class GestureDetector:
     def facial_detect(self) -> DetectionResult:
         """Detect signs requiring facial recognition.
         
+        Note: This method is deprecated. Hand gesture recognition should be
+        trained via the dynamic recorder instead of using hardcoded logic.
+        
         Signs: YES (head nod), NO (head shake)
         
         Returns:
@@ -277,7 +285,10 @@ class GestureDetector:
     def lip_read_detect(self) -> DetectionResult:
         """Detect mouth movement for lip reading.
         
-        Note: Current 9-sign set doesn't require lip reading.
+        Note: This method is deprecated. Hand gesture recognition should be
+        trained via the dynamic recorder instead of using hardcoded logic.
+        
+        Note: Current 5-sign set doesn't require lip reading.
         This method is provided for extensibility.
         
         Returns:
@@ -290,75 +301,23 @@ class GestureDetector:
     def _detect_hand_shape(self, landmarks: List[Any]) -> str:
         """Detect hand shape from landmarks.
         
+        Note: This method is deprecated. Hand gesture recognition should be
+        trained via the dynamic recorder instead of using hardcoded logic.
+        
         Args:
             landmarks: List of 21 hand landmarks
         
         Returns:
             Detected hand shape string
         """
-        if not landmarks or len(landmarks) < 21:
-            return "unknown"
-        
-        # Get finger tip positions
-        thumb_tip = landmarks[THUMB_TIP]
-        index_tip = landmarks[INDEX_TIP]
-        middle_tip = landmarks[MIDDLE_TIP]
-        ring_tip = landmarks[RING_TIP]
-        pinky_tip = landmarks[PINKY_TIP]
-        
-        # Get finger base positions for comparison
-        thumb_base = landmarks[2]
-        index_base = landmarks[5]
-        middle_base = landmarks[9]
-        ring_base = landmarks[13]
-        pinky_base = landmarks[17]
-        
-        # Check which fingers are extended
-        thumb_extended = thumb_tip.y < thumb_base.y
-        index_extended = index_tip.y < index_base.y
-        middle_extended = middle_tip.y < middle_base.y
-        ring_extended = ring_tip.y < ring_base.y
-        pinky_extended = pinky_tip.y < pinky_base.y
-        
-        # Count extended fingers
-        extended_count = sum([
-            thumb_extended,
-            index_extended,
-            middle_extended,
-            ring_extended,
-            pinky_extended
-        ])
-        
-        # Determine hand shape
-        if extended_count == 5:
-            # All fingers extended - FLAT_HAND_5 or OPEN_HAND_5
-            return "5"
-        elif extended_count == 0:
-            # No fingers extended - FIST
-            return "fist"
-        elif index_extended and middle_extended and not thumb_extended:
-            # N-shape: index and middle up
-            return "N"
-        elif index_extended and thumb_extended and not middle_extended:
-            # G-shape: index up, thumb touching middle
-            return "G"
-        elif index_extended and not middle_extended and not ring_extended and pinky_extended:
-            # Y-shape: index and pinky extended
-            return "Y"
-        elif index_extended and middle_extended and ring_extended and not pinky_extended:
-            # W-shape: three fingers extended
-            return "W"
-        elif index_extended and not middle_extended and not ring_extended and not pinky_extended:
-            # Index finger only - 1
-            return "1"
-        elif thumb_extended and not index_extended:
-            # Thumb up - fist with thumb
-            return "fist_thumb_up"
-        
+        # Deprecated: Use TrainedDynamicDetector for gesture recognition
         return "unknown"
     
     def _match_hand_shape(self, detected: str, expected: HandShape) -> bool:
         """Check if detected hand shape matches expected.
+        
+        Note: This method is deprecated. Hand gesture recognition should be
+        trained via the dynamic recorder instead of using hardcoded logic.
         
         Args:
             detected: Detected hand shape
@@ -367,28 +326,14 @@ class GestureDetector:
         Returns:
             True if shapes match
         """
-        expected_value = expected.value
-        
-        # Handle equivalent shapes
-        if expected_value in ["5", "flat_hand_5"]:
-            return detected in ["5", "flat"]
-        elif expected_value == "N":
-            return detected == "N"
-        elif expected_value == "G":
-            return detected == "G"
-        elif expected_value == "W":
-            return detected == "W"
-        elif expected_value == "1":
-            return detected == "1"
-        elif expected_value == "Fist":
-            return detected in ["fist", "fist_thumb_up"]
-        elif expected_value == "Y":
-            return detected == "Y"
-        
-        return detected == expected_value
+        # Deprecated: Use TrainedDynamicDetector for gesture recognition
+        return False
     
     def _validate_hand_region(self, hand_position: Tuple[float, float, float], gesture: GestureClass) -> bool:
         """Validate that hand is in the expected body region for the gesture.
+        
+        Note: This method is deprecated. Hand gesture recognition should be
+        trained via the dynamic recorder instead of using hardcoded logic.
         
         Args:
             hand_position: (x, y, z) position of wrist
@@ -397,38 +342,14 @@ class GestureDetector:
         Returns:
             True if hand is in expected region
         """
-        # If no target region specified, accept any position
-        if not hasattr(gesture, 'target_region') or not gesture.target_region:
-            return True
-        
-        x, y, z = hand_position
-        target = gesture.target_region.lower()
-        
-        # MediaPipe coordinates: x right, y down, z depth
-        # Screen is typically 640x480, normalized to 0-1
-        # y: 0 = top, 1 = bottom (head is at y ~0.15-0.25, chin ~0.35-0.45)
-        
-        if target == "forehead":
-            # HELLO - hand near forehead (y ~0.1-0.25, x ~0.3-0.7)
-            return 0.1 < y < 0.35 and 0.25 < x < 0.75
-        elif target == "chin":
-            # THANK YOU, GOOD, WATER, BAD - hand near chin (y ~0.35-0.55)
-            return 0.35 < y < 0.6
-        elif target == "cheek":
-            # NAME - hand near cheek (y ~0.25-0.45, x to side)
-            return 0.25 < y < 0.5 and (x < 0.35 or x > 0.65)
-        elif target == "body":
-            # HELP - hand in body area (y ~0.5-0.8)
-            return 0.5 < y < 0.9
-        elif target == "head":
-            # YES, NO - head area (y ~0.1-0.35)
-            return 0.1 < y < 0.4
-        
-        # Default: accept any position
+        # Deprecated: Use TrainedDynamicDetector for gesture recognition
         return True
 
     def _detect_movement_pattern(self, current_position: Tuple[float, float, float]) -> str:
         """Detect movement pattern from hand position history.
+        
+        Note: This method is deprecated. Hand gesture recognition should be
+        trained via the dynamic recorder instead of using hardcoded logic.
         
         Args:
             current_position: Current hand position (x, y, z)
@@ -436,43 +357,14 @@ class GestureDetector:
         Returns:
             Detected movement pattern
         """
-        if len(self._hand_position_history) < 2:
-            return "static"
-        
-        # Get previous positions
-        prev_positions = [
-            (h.get("landmarks", [None])[WRIST].x,
-             h.get("landmarks", [None])[WRIST].y)
-            for h in self._hand_position_history[-5:]
-            if h.get("landmarks")
-        ]
-        
-        if len(prev_positions) < 2:
-            return "static"
-        
-        # Calculate movement direction
-        first_pos = prev_positions[0]
-        last_pos = prev_positions[-1]
-        
-        dy = last_pos[1] - first_pos[1]  # Vertical movement
-        dx = last_pos[0] - first_pos[0]  # Horizontal movement
-        
-        # Determine movement pattern
-        if abs(dy) > 0.1:
-            if dy < 0:
-                return "upward"
-            else:
-                return "downward"
-        elif abs(dx) > 0.1:
-            if dx < 0:
-                return "leftward"
-            else:
-                return "rightward"
-        
+        # Deprecated: Use TrainedDynamicDetector for gesture recognition
         return "static"
     
     def _match_movement(self, detected: str, expected: MovementPattern) -> bool:
         """Check if detected movement matches expected.
+        
+        Note: This method is deprecated. Hand gesture recognition should be
+        trained via the dynamic recorder instead of using hardcoded logic.
         
         Args:
             detected: Detected movement pattern
@@ -481,20 +373,8 @@ class GestureDetector:
         Returns:
             True if movements match
         """
-        expected_value = expected.value
-        
-        if expected_value == "touch_forehead_move_out":
-            return detected in ["static", "upward", "downward"]
-        elif expected_value == "chin_to_forward":
-            return detected in ["forward", "upward"]
-        elif expected_value == "cheek_slight_move":
-            return detected in ["static", "slight"]
-        elif expected_value == "chin_to_down_out":
-            return detected in ["downward", "outward"]
-        elif expected_value == "body_to_up_out":
-            return detected in ["upward", "outward"]
-        
-        return True  # For head movements, handled separately
+        # Deprecated: Use TrainedDynamicDetector for gesture recognition
+        return False
     
     def _detect_head_movement(self) -> str:
         """Detect head movement from face position history.
@@ -540,6 +420,9 @@ class GestureDetector:
     ) -> float:
         """Calculate detection confidence.
         
+        Note: This method is deprecated. Hand gesture recognition should be
+        trained via the dynamic recorder instead of using hardcoded logic.
+        
         Args:
             hand_shape: Detected hand shape
             movement: Detected movement pattern
@@ -548,17 +431,8 @@ class GestureDetector:
         Returns:
             Confidence score (0.0-1.0)
         """
-        confidence = 0.5  # Base confidence
-        
-        # Hand shape match
-        if self._match_hand_shape(hand_shape, gesture.hand_shape):
-            confidence += 0.3
-        
-        # Movement match
-        if self._match_movement(movement, gesture.movement_pattern):
-            confidence += 0.2
-        
-        return min(confidence, 1.0)
+        # Deprecated: Use TrainedDynamicDetector for gesture recognition
+        return 0.0
     
     def reset(self) -> None:
         """Reset detector state."""

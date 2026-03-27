@@ -117,45 +117,6 @@ _register_gesture(GestureClass(
     target_region="cheek"
 ))
 
-# GOOD: 1 hand, smile, G-shape (index up, thumb-middle), chin to down-out
-_register_gesture(GestureClass(
-    name="GOOD",
-    hands_required=1,
-    uses_face=True,
-    uses_lips=False,
-    hand_shape=HandShape.G_SHAPE,
-    movement_pattern=MovementPattern.CHIN_TO_DOWN_OUT,
-    confidence_threshold=0.7,
-    dominant_hand=True,
-    target_region="chin"
-))
-
-# HELP: 1 hand, none, open hand (5), body to up-out
-_register_gesture(GestureClass(
-    name="HELP",
-    hands_required=1,
-    uses_face=False,
-    uses_lips=False,
-    hand_shape=HandShape.OPEN_HAND_5,
-    movement_pattern=MovementPattern.BODY_TO_UP_OUT,
-    confidence_threshold=0.7,
-    dominant_hand=True,
-    target_region="body"
-))
-
-# WATER: 1 (or 2) hands, none, W-shape (3 fingers), chin to forward
-_register_gesture(GestureClass(
-    name="WATER",
-    hands_required=1,  # Can be 1 or 2, default to 1
-    uses_face=False,
-    uses_lips=False,
-    hand_shape=HandShape.W_SHAPE,
-    movement_pattern=MovementPattern.CHIN_TO_FORWARD,
-    confidence_threshold=0.7,
-    dominant_hand=True,
-    target_region="chin"
-))
-
 # YES: 1 or head, head nod, thumb-up fist, up-down motion
 _register_gesture(GestureClass(
     name="YES",
@@ -180,19 +141,6 @@ _register_gesture(GestureClass(
     confidence_threshold=0.7,
     dominant_hand=True,
     target_region="head"
-))
-
-# BAD: 1 hand, none, Y-shape (2 extended), chin to down-out
-_register_gesture(GestureClass(
-    name="BAD",
-    hands_required=1,
-    uses_face=False,
-    uses_lips=False,
-    hand_shape=HandShape.Y_SHAPE,
-    movement_pattern=MovementPattern.CHIN_TO_DOWN_OUT,
-    confidence_threshold=0.7,
-    dominant_hand=True,
-    target_region="chin"
 ))
 
 
