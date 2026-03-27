@@ -27,18 +27,18 @@ from utils.logger import logger
 # ---------------------------------------------------------------------------
 # Palette  — dark tech / arcade aesthetic
 # ---------------------------------------------------------------------------
-BG          = (15,  12, 20)    # near-black with purple tint
-PANEL       = (28, 24, 38)
-ACCENT      = (0, 210, 255)    # cyan
-ACCENT2     = (180, 60, 255)   # purple
-TEXT_WHITE  = (240, 235, 250)
-TEXT_DIM    = (110, 100, 130)
-TEXT_WARN   = (60, 180, 255)
-GREEN       = (80, 220, 120)
-RED         = (60, 60, 200)
-GOLD        = (40, 200, 255)
+BG          = (20, 20, 25)     # dark charcoal (neutral, not purple-tinted)
+PANEL       = (35, 38, 45)     # slightly lighter panel background
+ACCENT      = (70, 130, 220)   # professional blue
+ACCENT2     = (100, 100, 120)  # muted gray-blue
+TEXT_WHITE  = (245, 245, 250)  # off-white
+TEXT_DIM    = (130, 135, 145)  # muted gray text
+TEXT_WARN   = (100, 150, 200)  # light blue accent
+GREEN       = (80, 180, 120)   # muted teal-green
+RED         = (120, 90, 100)   # muted rose
+GOLD        = (180, 160, 100)  # muted gold
 
-FONT        = cv2.FONT_HERSHEY_DUPLEX
+FONT        = cv2.FONT_HERSHEY_SIMPLEX
 FONT_MONO   = cv2.FONT_HERSHEY_PLAIN
 
 
@@ -79,20 +79,16 @@ def _text_centered(frame, txt, cy, scale, color, thick=1, font=None):
     _text(frame, txt, (W - w) // 2, cy, scale, color, thick, font=f)
 
 
-def _scanlines(frame, alpha=0.04):
-    """Subtle horizontal scanline texture."""
-    h, w = frame.shape[:2]
-    for y in range(0, h, 4):
-        cv2.line(frame, (0, y), (w, y), (0, 0, 0), 1)
-    overlay = frame.copy()
-    cv2.addWeighted(overlay, 1 - alpha, frame, alpha, 0, frame)
+def _scanlines(frame, alpha=0.0):
+    """Disabled - scanlines removed for modern clean look."""
+    pass
 
 
 def _grid_bg(frame):
-    """Faint perspective grid for depth."""
+    """Subtle grid for depth - modern clean version."""
     h, w = frame.shape[:2]
-    color = (30, 25, 42)
-    step = 40
+    color = (30, 30, 40)
+    step = 60
     for x in range(0, w, step):
         cv2.line(frame, (x, 0), (x, h), color, 1)
     for y in range(0, h, step):
@@ -100,10 +96,9 @@ def _grid_bg(frame):
 
 
 def _glow_text(frame, txt, x, y, scale, color, thick=2):
-    """Text with a soft glow halo."""
-    dim = tuple(max(0, c // 4) for c in color)
-    for dx, dy in [(-1,-1),(1,-1),(-1,1),(1,1),(0,-2),(0,2),(-2,0),(2,0)]:
-        cv2.putText(frame, txt, (x+dx, y+dy), FONT, scale, dim, thick+1, cv2.LINE_AA)
+    """Text with a subtle professional shadow."""
+    shadow = tuple(min(255, c + 60) for c in color)
+    cv2.putText(frame, txt, (x+2, y+2), FONT, scale, shadow, thick, cv2.LINE_AA)
     cv2.putText(frame, txt, (x, y), FONT, scale, color, thick, cv2.LINE_AA)
 
 
@@ -199,33 +194,31 @@ class MainMenu:
     def render(self) -> np.ndarray:
         frame = np.zeros((self.H, self.W, 3), dtype=np.uint8)
         frame[:] = BG
-        _grid_bg(frame)
 
         t = time.time() - self._t0
 
-        # Animated accent bar top
-        bar_x = int((math.sin(t * 0.8) * 0.5 + 0.5) * self.W)
-        cv2.line(frame, (0, 2), (bar_x, 2), ACCENT, 3)
-        cv2.line(frame, (bar_x, 2), (self.W, 2), ACCENT2, 3)
+        # Clean top accent bar
+        bar_x = int((math.sin(t * 0.5) * 0.5 + 0.5) * self.W)
+        cv2.rectangle(frame, (0, 0), (bar_x, 4), ACCENT, -1)
+        cv2.rectangle(frame, (bar_x, 0), (self.W, 4), ACCENT2, -1)
 
-        # Logo area
-        _glow_text(frame, "SignSense",
-                   self.W // 2 - 130, 90, 1.8, ACCENT, 3)
+        # Logo area - clean text
+        cv2.putText(frame, "SignSense",
+                   (self.W // 2 - 100, 90), FONT, 1.4, TEXT_WHITE, 2, cv2.LINE_AA)
         _text_centered(frame, "ASL Learning System",
-                       128, 0.55, TEXT_DIM, 1)
+                       130, 0.5, TEXT_DIM, 1)
 
-        # Animated pulse under logo
-        r = int(40 + 6 * math.sin(t * 2))
-        cv2.circle(frame, (self.W // 2, 145), r, (*ACCENT[:2], 80), 1)
+        # Subtle indicator
+        r = int(25 + 3 * math.sin(t * 1.5))
+        cv2.circle(frame, (self.W // 2, 155), r, (*ACCENT[:2], 40), 1)
 
         # Version tag
-        _text(frame, "v0.8-alpha", 8, self.H - 12, 0.38, TEXT_DIM)
+        _text(frame, "v0.8", 8, self.H - 12, 0.35, TEXT_DIM)
 
         # Buttons
         for b in self._buttons:
             b.draw(frame)
 
-        _scanlines(frame)
         return frame
 
 
@@ -291,7 +284,7 @@ class DebugMenu:
 
         # Top bar
         cv2.rectangle(frame, (0, 0), (self.W, 50), PANEL, -1)
-        _glow_text(frame, "DEBUG / EXPERIMENTAL", 20, 33, 0.8, (180, 100, 255), 2)
+        _glow_text(frame, "DEBUG / EXPERIMENTAL", 20, 33, 0.8, ACCENT2, 2)
 
         # Sub-label
         _text_centered(frame, "Data collection and model training", 90, 0.5, TEXT_DIM)
@@ -306,12 +299,6 @@ class DebugMenu:
         
         self._back.draw(frame)
 
-        # Animated accent
-        prog = (math.sin(t * 1.2) * 0.5 + 0.5)
-        w2 = int(self.W * prog)
-        cv2.line(frame, (0, self.H - 3), (w2, self.H - 3), ACCENT2, 2)
-
-        _scanlines(frame)
         return frame
 
 
@@ -340,9 +327,9 @@ class RecordMenu:
         cx = W // 2
         self._buttons = [
             Button(cx - bw//2, 140, cx + bw//2, 140+bh, 
-                   "STATIC LANDMARKS", "record_static", (0, 180, 200)),
+                   "STATIC LANDMARKS", "record_static", ACCENT),
             Button(cx - bw//2, 220, cx + bw//2, 220+bh, 
-                   "DYNAMIC GESTURES", "record_dynamic", (180, 100, 255)),
+                   "DYNAMIC GESTURES", "record_dynamic", ACCENT2),
         ]
         # Back button
         self._back = Button(20, self.H - 60, 130, self.H - 20,
@@ -376,7 +363,7 @@ class RecordMenu:
 
         # Top bar
         cv2.rectangle(frame, (0, 0), (self.W, 50), PANEL, -1)
-        _glow_text(frame, "RECORD DATA", 20, 33, 0.9, (0, 200, 255), 2)
+        _glow_text(frame, "RECORD DATA", 20, 33, 0.9, ACCENT, 2)
 
         # Sub-label
         _text_centered(frame, "Collect training data for new signs", 90, 0.5, TEXT_DIM)
@@ -396,12 +383,6 @@ class RecordMenu:
 
         self._back.draw(frame)
 
-        # Animated accent
-        prog = (math.sin(t * 1.2) * 0.5 + 0.5)
-        w2 = int(self.W * prog)
-        cv2.line(frame, (0, self.H - 3), (w2, self.H - 3), (0, 200, 255), 2)
-
-        _scanlines(frame)
         return frame
 
 
@@ -492,5 +473,4 @@ class LevelSelect:
         w2 = int(self.W * prog)
         cv2.line(frame, (0, self.H - 3), (w2, self.H - 3), ACCENT2, 2)
 
-        _scanlines(frame)
         return frame

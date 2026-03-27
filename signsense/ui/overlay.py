@@ -114,17 +114,17 @@ class Overlay:
             window_title: Title for the application window (unused, kept for API compatibility)
         """
 
-        # Color definitions (BGR format for OpenCV)
-        self.color_green = (0, 255, 0)
-        self.color_red = (0, 0, 255)
-        self.color_white = (255, 255, 255)
-        self.color_blue = (255, 0, 0)
-        self.color_yellow = (0, 255, 255)
-        self.color_cyan = (255, 255, 0)
-        self.color_orange = (0, 165, 255)
-        self.color_gray = (160, 160, 160)
-        self.color_dark = (30, 30, 30)
-        self.color_confirmed = (0, 220, 100)  # bright green for confirmed state
+        # Color definitions (BGR format for OpenCV) - modern professional palette
+        self.color_green = (100, 180, 100)   # muted teal-green
+        self.color_red = (100, 80, 90)        # muted rose
+        self.color_white = (250, 250, 250)    # off-white
+        self.color_blue = (220, 130, 70)      # professional blue
+        self.color_yellow = (80, 200, 220)     # soft cyan-yellow
+        self.color_cyan = (255, 200, 100)      # muted cyan
+        self.color_orange = (100, 140, 200)   # soft blue-orange
+        self.color_gray = (140, 140, 145)      # neutral gray
+        self.color_dark = (25, 25, 30)         # dark charcoal
+        self.color_confirmed = (90, 180, 120)  # muted green for confirmed state
 
         # Font settings
         self.font = cv2.FONT_HERSHEY_SIMPLEX
@@ -194,8 +194,8 @@ class Overlay:
 
         # Draw semi-transparent bar
         overlay = frame.copy()
-        cv2.rectangle(overlay, (0, 0), (width, bar_height), (30, 30, 30), -1)
-        cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
+        cv2.rectangle(overlay, (0, 0), (width, bar_height), self.color_dark, -1)
+        cv2.addWeighted(overlay, 0.75, frame, 0.25, 0, frame)
 
         # Draw title
         title_text = "SignSense - Prototype"
@@ -236,10 +236,10 @@ class Overlay:
         # Semi-transparent background panel
         overlay = frame.copy()
         cv2.rectangle(overlay, (panel_x - 10, panel_y), (panel_x + panel_w, panel_y + panel_h),
-                      (20, 20, 20), -1)
-        cv2.addWeighted(overlay, 0.75, frame, 0.25, 0, frame)
+                      self.color_dark, -1)
+        cv2.addWeighted(overlay, 0.8, frame, 0.2, 0, frame)
         cv2.rectangle(frame, (panel_x - 10, panel_y), (panel_x + panel_w, panel_y + panel_h),
-                      (80, 80, 80), 1)
+                      (70, 70, 75), 1)
 
         # --- Letter display ---
         letter = None
@@ -342,8 +342,8 @@ class Overlay:
         # Semi-transparent background
         overlay = frame.copy()
         cv2.rectangle(overlay, (bar_area_x - 5, bar_area_y - 5),
-                      (bar_area_x + 300, bar_area_y + bar_area_h), (20, 20, 20), -1)
-        cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
+                      (bar_area_x + 300, bar_area_y + bar_area_h), self.color_dark, -1)
+        cv2.addWeighted(overlay, 0.65, frame, 0.35, 0, frame)
 
         # Label
         cv2.putText(frame, "Scores:", (bar_area_x, bar_area_y + 12), self.font,
@@ -459,14 +459,14 @@ class Overlay:
         # Draw connections
         for a, b in HAND_CONNECTIONS:
             if a < len(pts) and b < len(pts):
-                cv2.line(frame, pts[a], pts[b], (0, 255, 0), 2, cv2.LINE_AA)
+                cv2.line(frame, pts[a], pts[b], self.color_blue, 2, cv2.LINE_AA)
 
         # Draw landmark points
         for (x, y) in pts:
-            cv2.circle(frame, (x, y), 3, (0, 0, 255), -1)
+            cv2.circle(frame, (x, y), 3, self.color_white, -1)
 
         # Highlight index fingertip (landmark 8) with a circle
         if len(pts) > 8:
             tip_x, tip_y = pts[8]
-            cv2.circle(frame, (tip_x, tip_y), 10, self.color_yellow, 3)
-            cv2.circle(frame, (tip_x, tip_y), 5, self.color_yellow, -1)
+            cv2.circle(frame, (tip_x, tip_y), 10, self.color_cyan, 2)
+            cv2.circle(frame, (tip_x, tip_y), 4, self.color_cyan, -1)

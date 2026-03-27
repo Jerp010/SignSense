@@ -117,6 +117,14 @@ def open_camera(W=640, H=480):
     cap.set(cv2.CAP_PROP_FPS, 60)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     
+    # Warm up the camera by reading and discarding a few frames
+    # This helps stabilize the video feed and prevents blue/blank frames
+    logger.debug("Warming up camera...")
+    for _ in range(5):
+        ret, temp = cap.read()
+        if ret:
+            logger.debug(f"Warmup frame: {temp.shape if temp is not None else 'None'}")
+    
     logger.debug("Camera opened successfully")
     return cap
 
@@ -129,10 +137,19 @@ def release_camera(cap):
 def read_frame(cap):
     ret, frame = cap.read()
     if not ret:
+        logger.warning("Camera read returned False")
+        return None
+    if frame is None:
+        logger.warning("Camera read returned None frame")
+        return None
+    # Validate frame shape and size
+    if frame.size == 0:
+        logger.warning("Camera frame is empty (size=0)")
         return None
     try:
         return cv2.flip(frame, 1)
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Error flipping frame: {e}")
         return frame
 
 
@@ -167,28 +184,28 @@ def _mouse_cb(event, x, y, flags, param):
         _mouse_event = ("mouse_move",  (x, y))
     elif event == cv2.EVENT_LBUTTONDOWN:
         _mouse_event = ("mouse_click", (x, y))
+    elif event == cv2.EVENT_LBUTTONUP:
+        _mouse_event = ("mouse_release", (x, y))
 
 
 # ---------------------------------------------------------------------------
 # State: MAIN MENU  (no camera)
 # ---------------------------------------------------------------------------
 
-def run_main_menu(W=640, H=480) -> str:
+def run_main_menu(W=640, H=480, win_name="SignSense") -> str:
     """Blocks until user picks an action. Returns 'play'|'debug'|'quit'."""
-    WIN  = "SignSense"
-    cv2.setMouseCallback(WIN, _mouse_cb)
     menu      = MainMenu(W, H)
     last_size = (W, H)
 
     global _mouse_event
     while True:
-        cur_size = get_window_size(WIN, W, H)
+        cur_size = get_window_size(win_name, W, H)
         if cur_size != last_size:
             menu      = MainMenu(*cur_size)
             last_size = cur_size
 
         frame = menu.render()
-        cv2.imshow(WIN, frame)
+        cv2.imshow(win_name, frame)
 
         key = cv2.waitKey(16) & 0xFF
         result = menu.handle_event("key", key)
@@ -202,7 +219,7 @@ def run_main_menu(W=640, H=480) -> str:
             if result:
                 return result
 
-        if cv2.getWindowProperty(WIN, cv2.WND_PROP_VISIBLE) < 1:
+        if cv2.getWindowProperty(win_name, cv2.WND_PROP_VISIBLE) < 1:
             return "quit"
 
 
@@ -434,7 +451,7 @@ def run_play_mode(level_id: str, W=640, H=480) -> str:
                 # Check if we just entered CONFIRMING state
                 if hasattr(play_mode.stage_tracker, '_confirm_time'):
                     confirm_age = time.time() - play_mode.stage_tracker._confirm_time
-                    if confirm_age < 0.1:  # Just confirmed
+                    if confirm_age < 0.05:  # Only log within first 50ms (roughly 1 frame at 30fps)
                         confirmed = True
             
             if confirmed:
@@ -663,7 +680,7 @@ def main():
             W, H = get_window_size(WIN, DEFAULT_W, DEFAULT_H)
 
             if state == "MAIN_MENU":
-                action = run_main_menu(W, H)
+                action = run_main_menu(W, H, WIN)
                 logger.info(f"Main menu action: {action}")
                 if action == "play":
                     state = "LEVEL_SELECT"

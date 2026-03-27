@@ -41,6 +41,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from utils.logger import logger
 
+
 # Import gesture detection components
 from signsense.signs.gesture_definitions import (
     GESTURE_REGISTRY,
@@ -144,17 +145,18 @@ GESTURE_STAGES: List[GestureStage] = [
 # ---------------------------------------------------------------------------
 # Layout / palette constants
 # ---------------------------------------------------------------------------
-BG          = (15,  12, 20)
-PANEL_BG    = (22, 18, 32)
-ACCENT      = (0, 210, 255)
-ACCENT2     = (180, 60, 255)
-GREEN       = (80, 220, 120)
-ORANGE      = (40, 165, 255)
-RED_COL     = (60, 60, 200)
-WHITE       = (240, 235, 250)
-DIM         = (110, 100, 130)
-GOLD        = (40, 200, 255)
-FONT        = cv2.FONT_HERSHEY_DUPLEX
+BG          = (20, 20, 25)
+PANEL_BG    = (35, 38, 45)
+ACCENT      = (70, 130, 220)
+ACCENT2     = (100, 100, 120)
+GREEN       = (80, 180, 120)
+ORANGE      = (100, 140, 200)
+RED_COL     = (120, 90, 100)
+WHITE       = (245, 245, 250)
+DIM         = (120, 125, 135)
+TEXT_DIM    = (130, 135, 145)
+GOLD        = (180, 160, 100)
+FONT        = cv2.FONT_HERSHEY_SIMPLEX
 FONT_MONO   = cv2.FONT_HERSHEY_PLAIN
 
 HOLD_SECONDS    = 3.0   # seconds to hold a gesture
@@ -165,6 +167,12 @@ def _centered_text(frame, txt, cy, scale, color, thick=1):
     (w, h), _ = cv2.getTextSize(txt, FONT, scale, thick)
     W = frame.shape[1]
     cv2.putText(frame, txt, ((W - w)//2, cy), FONT, scale, color, thick, cv2.LINE_AA)
+
+
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+
+ 
 
 
 def _rr(frame, x1, y1, x2, y2, color, thick=-1, r=6):
@@ -192,6 +200,7 @@ class PreviewBox:
     3 pages cycled by clicking left/right arrows or pressing ← →.
 
     If real images don't exist yet, draws a styled placeholder.
+    Supports dragging to reposition on screen.
     """
 
     W, H    = 160, 150
@@ -200,9 +209,26 @@ class PreviewBox:
     def __init__(self):
         self._page  = 0
         self._mouse = (0, 0)
+        self._pos = None  # Custom position (x, y) - when None, uses default position
+        self._dragging = False
+        self._drag_offset = (0, 0)
 
     def reset(self):
         self._page = 0
+
+    def set_position(self, x, y):
+        """Set custom position for the preview box."""
+        self._pos = (x, y)
+
+    def get_position(self, default_x, default_y):
+        """Get current position (custom or default)."""
+        # Only return custom position if it's been explicitly set and is valid
+        if self._pos is not None and self._pos[0] is not None:
+            # Validate the position is reasonable (positive coordinates)
+            if self._pos[0] >= 0 and self._pos[1] >= 0:
+                return self._pos
+        # Otherwise return default position
+        return (default_x, default_y)
 
     def handle_event(self, event_type, data=None, bx=0, by=0):
         """bx, by = top-left corner of the preview box on screen."""
@@ -214,12 +240,34 @@ class PreviewBox:
                 self._page = (self._page - 1) % self.PAGES
         elif event_type == "mouse_click":
             mx, my = data[0] - bx, data[1] - by
-            # left arrow zone
-            if 0 <= mx <= 26 and ry//2 - 16 <= my <= ry//2 + 16:
+            # Check if click is within the preview box bounds for dragging
+            # Allow drag initiation from anywhere in the box (not just arrow zones)
+            if 0 <= mx <= rx and 0 <= my <= ry:
+                self._dragging = True
+                self._drag_offset = (data[0], data[1])  # Store mouse position, not local coords
+                self._pos = (bx, by)  # Start tracking custom position
+            # left arrow zone (only if not in main box area for nav)
+            elif 0 <= mx <= 26 and ry//2 - 16 <= my <= ry//2 + 16:
                 self._page = (self._page - 1) % self.PAGES
             # right arrow zone
             elif rx - 26 <= mx <= rx and ry//2 - 16 <= my <= ry//2 + 16:
                 self._page = (self._page + 1) % self.PAGES
+        elif event_type == "mouse_release":
+            self._dragging = False
+        elif event_type == "mouse_move" and self._dragging and data:
+            # Update position based on mouse movement (clamped to valid range)
+            mx, my = data[0], data[1]
+            # Calculate new position: current mouse - initial mouse + initial box position
+            # This correctly handles the drag offset
+            if self._pos is not None:
+                new_x = mx - self._drag_offset[0] + self._pos[0]
+                new_y = my - self._drag_offset[1] + self._pos[1]
+            else:
+                new_x, new_y = mx, my
+            # Clamp position to reasonable bounds
+            new_x = max(-PreviewBox.W + 20, min(new_x, 1000))
+            new_y = max(-PreviewBox.H + 20, min(new_y, 1000))
+            self._pos = (new_x, new_y)
 
     def render(self, gesture_name: str) -> np.ndarray:
         img = np.zeros((self.H, self.W, 3), dtype=np.uint8)
@@ -262,14 +310,14 @@ class PreviewBox:
         """Placeholder when no image is available."""
         H, W = img.shape[:2]
         # Grey inner area
-        cv2.rectangle(img, (4, 18), (W - 4, H - 18), (35, 30, 48), -1)
+        cv2.rectangle(img, (4, 18), (W - 4, H - 18), (40, 42, 50), -1)
         # Large gesture name (abbreviated if needed)
         display = gesture_name[:8] if len(gesture_name) > 8 else gesture_name
         scale = 2.0
         (tw, th), _ = cv2.getTextSize(display, FONT, scale, 4)
         tx = (W - tw) // 2
         ty = (H - 20 + th) // 2
-        cv2.putText(img, display, (tx, ty), FONT, scale, (40, 180, 220), 4, cv2.LINE_AA)
+        cv2.putText(img, display, (tx, ty), FONT, scale, ACCENT, 4, cv2.LINE_AA)
         # "no image" label
         cv2.putText(img, "preview", (W//2 - 28, H - 22), FONT, 0.35, DIM, 1, cv2.LINE_AA)
 
@@ -297,6 +345,7 @@ class StageTracker:
         self._hold_start    = None
         self._confirm_time  = None
         self._dynamic_det   = None  # Dynamic detector for DYNAMIC signs
+        self._skipped       = set()  # Track skipped stages
         self._load_detector()
 
     # -- public read --------------------------------------------------------
@@ -326,6 +375,11 @@ class StageTracker:
     @property
     def total_stages(self) -> int:
         return len(self._stages)
+
+    @property
+    def skipped_stages(self) -> set:
+        """Return set of skipped stage indices."""
+        return self._skipped
 
     @property
     def is_complete(self) -> bool:
@@ -445,6 +499,43 @@ class StageTracker:
         
         return False
 
+    def skip(self):
+        """Skip the current letter entirely and move to the next one.
+        
+        This skips at the letter/sign level, not at individual stages within
+        a dynamic sign. For dynamic signs like J (which has 3 internal stages),
+        pressing skip once moves to the next letter (e.g., K).
+        """
+        if self._idx < len(self._stages):
+            stage = self._stages[self._idx]
+            logger.info(f"Skipping letter '{stage.name}' entirely, moving to next")
+        
+        self._idx += 1
+        
+        if self._idx >= len(self._stages):
+            self._state = "COMPLETE"
+            logger.info(f"All letters complete")
+        else:
+            logger.info(f"Advancing to next letter ({self.stage_num}/{self.total_stages})")
+            self._state = "WAITING"
+            self._hold_start = None
+            self._confirm_time = None
+            self._load_detector()
+
+    def back(self):
+        """Go back to the previous stage."""
+        if self._idx > 0:
+            # Remove from skipped if it was skipped
+            prev_idx = self._idx - 1
+            if prev_idx in self._skipped:
+                self._skipped.remove(prev_idx)
+            self._idx -= 1
+            logger.info(f"Going back to previous sign ({self.stage_num}/{self.total_stages})")
+            self._state = "WAITING"
+            self._hold_start = None
+            self._confirm_time = None
+            self._load_detector()
+
     def advance(self):
         """Move to the next sign. Called when user presses SPACE / Next."""
         self._idx  += 1
@@ -470,27 +561,65 @@ class PlayModeRenderer:
         self.W, self.H   = W, H
         self.preview_box = PreviewBox()
 
+
     def get_preview_box_origin(self, frame_w=None, frame_h=None) -> tuple:
         """
-        Always anchored to the ACTUAL frame bottom-right corner.
+        Get position for the preview box.
+        
+        If PreviewBox has a custom position set (dragged by user), use that.
+        Otherwise, use default position on the left side (aligned with sign description panel).
         Pass the live frame dimensions from render() so the box stays
-        glued to the corner after a window resize.
+        glued to the position after a window resize.
         Falls back to stored W/H for mouse hit-testing between frames.
         """
         w = frame_w if frame_w is not None else self.W
         h = frame_h if frame_h is not None else self.H
-        # Position on right side, vertically centered
-        bx = w - PreviewBox.W - 8
-        by = (h - PreviewBox.H) // 2
+        
+        # Get custom position from preview box (or default)
+        default_bx, default_by = 8, 56  # Left side position
+        bx, by = self.preview_box.get_position(default_bx, default_by)
+        
+        # Clamp to valid bounds - ensure we can actually display the box
+        # bx must be <= w - PreviewBox.W to fit within frame
+        max_x = max(0, w - PreviewBox.W)
+        max_y = max(0, h - PreviewBox.H)
+        bx = min(bx, max_x)
+        by = min(by, max_y)
+        bx = max(0, bx)
+        by = max(0, by)
+        
         return (bx, by)
 
     def handle_event(self, event_type, data=None, stage_tracker=None):
+        """Process events (keyboard and mouse) for the renderer.
+        
+        Args:
+            event_type: The type of event ('key', 'mouse_click', 'mouse_move', 'mouse_release')
+            data: Event data - for mouse events, this is either a tuple (x, y) for mouse_move
+                 or a tuple (x, y) for mouse_click
+            stage_tracker: The StageTracker instance for handling skip/back/next actions
+        """
+        # Handle keyboard events (SPACE, S, B)
+        if event_type == "key":
+            # SPACE (32) - Advance to next sign when confirming
+            if data == 32:  # SPACE
+                if stage_tracker and stage_tracker.state == "CONFIRMING":
+                    stage_tracker.advance()
+                    self.preview_box.reset()
+            # S key (83) - Skip current stage (works anytime)
+            elif data == ord('s') or data == ord('S'):
+                if stage_tracker and not stage_tracker.is_complete:
+                    stage_tracker.skip()
+                    self.preview_box.reset()
+            # B key (66) - Go back to previous stage
+            elif data == ord('b') or data == ord('B'):
+                if stage_tracker and stage_tracker._idx > 0:
+                    stage_tracker.back()
+                    self.preview_box.reset()
+        
+        # Handle preview box events
         bx, by = self.get_preview_box_origin()
         self.preview_box.handle_event(event_type, data, bx, by)
-        if event_type == "key" and data == 32:  # SPACE
-            if stage_tracker and stage_tracker.state == "CONFIRMING":
-                stage_tracker.advance()
-                self.preview_box.reset()
 
     def render(self,
                camera_frame: np.ndarray,
@@ -505,6 +634,9 @@ class PlayModeRenderer:
         if stage_tracker.is_complete:
             return self._render_complete(frame)
 
+        # Update animation phase for Z gesture guidance
+
+
         # ── Top HUD bar ────────────────────────────────────────────────────
         self._draw_hud(frame, stage_tracker, fps, hand_detected)
 
@@ -515,11 +647,15 @@ class PlayModeRenderer:
         self._draw_progress_bar(frame, stage_tracker, detection_result)
 
 
-        # ── Preview box (bottom right) ──────────────────────────────────────
-        # Pass live frame dims so the box is always in the true bottom-right
-        # corner regardless of how the window has been resized.
+        # ── Preview box ────────────────────────────────────────────────────
+        # Pass live frame dims so the box stays in position after window resize
         fH, fW = frame.shape[:2]
         bx, by = self.get_preview_box_origin(fW, fH)
+        
+        # Ensure preview box stays within frame bounds
+        bx = max(0, min(bx, fW - PreviewBox.W))
+        by = max(0, min(by, fH - PreviewBox.H))
+        
         preview = self.preview_box.render(
             stage.name if stage else "?")
         frame[by:by + PreviewBox.H, bx:bx + PreviewBox.W] = preview
@@ -527,6 +663,9 @@ class PlayModeRenderer:
         # ── Confirming flash ────────────────────────────────────────────────
         if stage_tracker.state == "CONFIRMING":
             self._draw_confirm_flash(frame, stage)
+
+        # ── Control buttons ─────────────────────────────────────────────────────
+        self._draw_control_buttons(frame, stage_tracker)
 
         return frame
 
@@ -538,7 +677,7 @@ class PlayModeRenderer:
         H, W = frame.shape[:2]
         # Dark bar
         overlay = frame.copy()
-        cv2.rectangle(overlay, (0, 0), (W, 48), (12, 10, 18), -1)
+        cv2.rectangle(overlay, (0, 0), (W, 48), (20, 20, 25), -1)
         cv2.addWeighted(overlay, 0.82, frame, 0.18, 0, frame)
 
         # Stage counter
@@ -562,8 +701,15 @@ class PlayModeRenderer:
         # Stage completion dots
         total = tracker.total_stages
         cur = tracker.stage_num
+        skipped = tracker.skipped_stages
         for i in range(total):
-            color = ACCENT if i < cur - 1 else DIM
+            # Determine color: red if skipped, accent if completed, dim if pending
+            if i in skipped:
+                color = RED_COL  # Red for skipped stages
+            elif i < cur - 1:
+                color = ACCENT  # Accent for completed stages
+            else:
+                color = DIM    # Dim for pending stages
             cx = 12 + i * 12
             cy = 44
             cv2.circle(frame, (cx, cy), 4, color, -1)
@@ -575,9 +721,9 @@ class PlayModeRenderer:
         py = 56
 
         overlay = frame.copy()
-        _rr(overlay, px, py, px + pw, py + ph, (18, 14, 28), -1)
+        _rr(overlay, px, py, px + pw, py + ph, PANEL_BG, -1)
         cv2.addWeighted(overlay, 0.82, frame, 0.18, 0, frame)
-        cv2.rectangle(frame, (px, py), (px + pw, py + ph), (60, 55, 80), 1)
+        cv2.rectangle(frame, (px, py), (px + pw, py + ph), (60, 60, 70), 1)
 
         stage = tracker.current_stage
         if not stage:
@@ -592,7 +738,7 @@ class PlayModeRenderer:
         tl_thickness = 3 if is_dynamic else 4
         (tlw, tlh), _ = cv2.getTextSize(stage.name, FONT, tl_scale, tl_thickness)
         tlx = px + (pw - tlw) // 2
-        tly = py + 35  # Moved up to avoid overlap
+        tly = py + 43  # Top padding of 8px added
         color = GREEN if tracker.state == "CONFIRMING" else ACCENT
         cv2.putText(frame, stage.name, (tlx, tly), FONT, tl_scale, color, tl_thickness, cv2.LINE_AA)
 
@@ -608,16 +754,18 @@ class PlayModeRenderer:
             stage_y = py + 56
             # Get stage info from dynamic detector if available
             cv2.putText(frame, f"Stage progress...", (px + 8, stage_y), FONT, 0.28, ACCENT2, 1, cv2.LINE_AA)
+            
+
 
         # Description hint (for letters)
         if hasattr(stage, 'description') and stage.description:
-            desc_y = py + 60  # Moved below sign name
+            desc_y = py + 68  # 8px top padding added
             desc_text = stage.description[:28] + "..." if len(stage.description) > 28 else stage.description
             cv2.putText(frame, desc_text, (px + 8, desc_y), FONT, 0.28, DIM, 1, cv2.LINE_AA)
 
         # State hint - customize for dynamic signs vs static letters
         state = tracker.state
-        hint_y = py + ph - 28
+        hint_y = py + ph - 20  # 8px top padding added
         
         if state == "WAITING":
             if is_dynamic:
@@ -635,13 +783,14 @@ class PlayModeRenderer:
         if hint:
             cv2.putText(frame, hint, (px + 6, hint_y),
                         FONT, 0.36, GOLD, 1, cv2.LINE_AA)
+        
 
         # Detected gesture/letter (small, bottom right of panel)
         # Show for both gestures and dynamic signs
         if detection_result and detection_result.sign_name:
             det = detection_result.sign_name
             conf = detection_result.confidence
-            det_col = GREEN if det == stage.name else (180, 100, 80)
+            det_col = GREEN if det == stage.name else DIM
             cv2.putText(frame, f"Seen: {det} {conf*100:.0f}%", 
                         (px + 6, py + ph - 10), FONT, 0.32, det_col, 1, cv2.LINE_AA)
 
@@ -651,7 +800,7 @@ class PlayModeRenderer:
         bar_y = H - 16
 
         # Background bar
-        cv2.rectangle(frame, (0, bar_y), (W, bar_y + bar_h), (30, 25, 40), -1)
+        cv2.rectangle(frame, (0, bar_y), (W, bar_y + bar_h), (35, 38, 45), -1)
 
         # Progress fill
         if tracker.progress > 0:
@@ -660,7 +809,22 @@ class PlayModeRenderer:
             cv2.rectangle(frame, (0, bar_y), (fill_w, bar_y + bar_h), col, -1)
 
         # Border
-        cv2.rectangle(frame, (0, bar_y), (W, bar_y + bar_h), (60, 50, 70), 1)
+        cv2.rectangle(frame, (0, bar_y), (W, bar_y + bar_h), (55, 60, 70), 1)
+
+    def _draw_control_buttons(self, frame, stage_tracker):
+        """Draw controls as text labels (no visual buttons) at the bottom of the screen."""
+        H, W = frame.shape[:2]
+        
+        # Single non-bold text label showing available controls
+        controls_text = "SPACE: Next | S: Skip | B: Back"
+        
+        # Calculate text position - centered at bottom
+        (tw, th), _ = cv2.getTextSize(controls_text, FONT, 0.4, 1)
+        tx = (W - tw) // 2
+        ty = H - 30
+        
+        # Draw non-bold text label
+        cv2.putText(frame, controls_text, (tx, ty), FONT, 0.4, DIM, 1, cv2.LINE_AA)
 
     def _draw_confirm_flash(self, frame, stage):
         """Draws a checkmark overlay when gesture is confirmed."""
@@ -670,7 +834,7 @@ class PlayModeRenderer:
 
         # Semi-transparent overlay
         overlay = frame.copy()
-        cv2.circle(overlay, (cx, cy), r, (40, 180, 100), -1)
+        cv2.circle(overlay, (cx, cy), r, (40, 120, 80), -1)
         cv2.addWeighted(overlay, 0.3, frame, 0.7, 0, frame)
 
         # Checkmark
@@ -689,7 +853,7 @@ class PlayModeRenderer:
 
         # Dark overlay
         overlay = frame.copy()
-        cv2.rectangle(overlay, (0, 0), (W, H), (10, 8, 15), -1)
+        cv2.rectangle(overlay, (0, 0), (W, H), (20, 20, 25), -1)
         cv2.addWeighted(overlay, 0.75, frame, 0.25, 0, frame)
 
         # Title
@@ -783,10 +947,16 @@ class PlayMode:
         """
         self._hand_detected = hand_detected
         
+        # Convert RGB to BGR for rendering (OpenCV expects BGR)
+        # The input frame is in RGB (from main.py), but renderer uses OpenCV
+        # which expects BGR color format
+        frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        
         detection_result = None
         
         if self.mode == "gesture":
             # Gesture mode: use GestureDetector
+            # Pass original RGB frame to detector (it expects RGB format)
             if self.gesture_detector:
                 self.gesture_detector.update(frame)
                 # Get detection result - pass target gesture for focused detection
@@ -807,9 +977,9 @@ class PlayMode:
         handedness = hand_data.get('handedness', None) if hand_data else None
         self.stage_tracker.update(detection_result, landmarks=landmarks, handedness=handedness)
         
-        # Render the frame
+        # Render the frame using BGR format
         rendered = self.renderer.render(
-            camera_frame=frame,
+            camera_frame=frame_bgr,
             stage_tracker=self.stage_tracker,
             detection_result=detection_result,
             fps=30.0,  # Would be calculated in real app

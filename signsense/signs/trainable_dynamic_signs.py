@@ -60,6 +60,8 @@ class TrainedDynamicDetector:
         self._frame_buffer = []  # Store recent frames for sequence processing
         self._stage_frames = 0
         self._stage_confidence = 0.0
+        self._final_stage_hold = 0
+        self._consecutive_stage_preds = 0  # Track consecutive predictions for validation
         
         self._load_model()
     
@@ -113,6 +115,7 @@ class TrainedDynamicDetector:
         self._frame_buffer = []
         self._stage_frames = 0
         self._stage_confidence = 0.0
+        self._final_stage_hold = 0
         self._final_stage_hold = 0
     
     @property
@@ -185,28 +188,64 @@ class TrainedDynamicDetector:
         # Update stage tracking
         self._stage_confidence = stage_confidence
         
-        # Check for stage change - allow progression or regression
-        if predicted_stage != self._current_stage:
-            # Stage changed!
-            print(f"[{self.sign_name}] Stage {self._current_stage} → {predicted_stage}")
-            self._current_stage = predicted_stage
-            self._stage_frames = 0
-            
-            # Reset hold counter when reaching final stage
-            if self._current_stage >= self._num_stages - 1:
-                self._final_stage_hold = 0
-        else:
-            # Still in same stage - increment hold counter if at final stage
-            if self._current_stage >= self._num_stages - 1:
-                self._final_stage_hold = getattr(self, '_final_stage_hold', 0) + 1
-                # Need to hold final stage for minimum frames before completing
-                min_hold_frames = 10  # ~0.3 seconds at 30fps
-                if self._final_stage_hold >= min_hold_frames:
-                    self._phase_complete = True
-                    print(f"[{self.sign_name}] Sign complete! ✓ (held {self._final_stage_hold} frames)")
-                    return True
+        # ENFORCE SEQUENTIAL STAGE PROGRESSION
+        # Only allow progression to the next sequential stage (current + 1)
+        # Reject any jumps to non-sequential stages
+        # Also require minimum confidence and consistency for valid transitions
+        min_confidence = 0.4  # Lowered to make detection easier
         
-        self._stage_frames += 1
+        if predicted_stage != self._current_stage:
+            # Track consecutive predictions for the same stage
+            if predicted_stage == getattr(self, '_last_predicted_stage', None):
+                self._consecutive_stage_preds += 1
+            else:
+                self._consecutive_stage_preds = 1
+            self._last_predicted_stage = predicted_stage
+            
+            # Require confidence threshold (lowered threshold for easier detection)
+            if stage_confidence >= min_confidence:
+                # Calculate the expected next stage (must be current + 1)
+                expected_next_stage = self._current_stage + 1
+                
+                # Only allow progression to the immediate next stage
+                if predicted_stage == expected_next_stage:
+                    # Valid sequential progression
+                    print(f"[{self.sign_name}] Stage {self._current_stage} → {predicted_stage} (sequential, conf={stage_confidence:.2f})")
+                    self._current_stage = predicted_stage
+                    self._stage_frames = 0  # Reset timeout counter
+                    self._consecutive_stage_preds = 0  # Reset consistency counter
+                elif predicted_stage > self._current_stage:
+                    # Invalid jump (e.g., 0→2) - reject and wait for intermediate stage
+                    print(f"[{self.sign_name}] Stage {self._current_stage} → {predicted_stage} (REJECTED - must go through {expected_next_stage} first)")
+                    # Don't update stage, but also don't reset the timeout counter
+                else:
+                    # Regression (e.g., 2→1) - allow it but reset hold counter
+                    print(f"[{self.sign_name}] Stage {self._current_stage} → {predicted_stage} (regression)")
+                    self._current_stage = predicted_stage
+                    self._stage_frames = 0  # Reset timeout counter
+                    self._consecutive_stage_preds = 0  # Reset consistency counter
+            else:
+                # Not confident enough yet - keep current stage
+                if stage_confidence < min_confidence:
+                    print(f"[{self.sign_name}] Stage {predicted_stage} (low confidence {stage_confidence:.2f}, ignoring)")
+                else:
+                    print(f"[{self.sign_name}] Stage {predicted_stage} (need {self._consecutive_stage_preds}/2 consistent predictions)")
+        else:
+            # Same stage - increment timeout counter
+            self._stage_frames += 1
+            self._consecutive_stage_preds = 0  # Reset since we're staying in same stage
+        
+        # Reset hold counter when reaching final stage
+        if self._current_stage >= self._num_stages - 1:
+            self._final_stage_hold = getattr(self, '_final_stage_hold', 0) + 1
+            # Need to hold final stage for minimum frames before completing
+            min_hold_frames = 10  # ~0.3 seconds at 30fps
+            if self._final_stage_hold >= min_hold_frames:
+                self._phase_complete = True
+                print(f"[{self.sign_name}] Sign complete! ✓ (held {self._final_stage_hold} frames)")
+                # Reset detector after completion to prevent repeated confirmations
+                self.reset()
+                return True
         
         # Timeout if stuck in stage too long
         if self._stage_frames > self._config.detector.phase_timeout:

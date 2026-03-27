@@ -154,18 +154,6 @@ def main():
     # Parse arguments with config support
     parser = create_parser()
     parser.add_argument(
-        "--data",
-        type=str,
-        default=None,
-        help="Path to training data CSV",
-    )
-    parser.add_argument(
-        "--output", 
-        type=str, 
-        default=None, 
-        help="Output model path"
-    )
-    parser.add_argument(
         "--resume",
         action="store_true",
         help="Resume from latest checkpoint"
