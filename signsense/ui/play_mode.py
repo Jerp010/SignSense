@@ -199,6 +199,7 @@ ACCENT2     = (100, 100, 120)
 GREEN       = (80, 180, 120)
 ORANGE      = (100, 140, 200)
 RED_COL     = (120, 90, 100)
+PURE_RED    = (0, 0, 255)  # Pure red (#FF0000) for Z special stage
 WHITE       = (245, 245, 250)
 DIM         = (120, 125, 135)
 TEXT_DIM    = (130, 135, 145)
@@ -1011,17 +1012,17 @@ class PlayModeRenderer:
         if not stage:
             return
         
-        # Title
+        # Title - Use pure red for high contrast and visibility
         title = stage.instruction_title
         (tw, th), _ = cv2.getTextSize(title, FONT, 0.5, 1)
         tx = px + (pw - tw) // 2
-        cv2.putText(frame, title, (tx, py + 25), FONT, 0.5, GOLD, 1, cv2.LINE_AA)
+        cv2.putText(frame, title, (tx, py + 25), FONT, 0.5, PURE_RED, 1, cv2.LINE_AA)
         
-        # Instructional text (multi-line)
+        # Instructional text (multi-line) - Use pure red for high contrast
         lines = stage.instruction_text.split('\n')
         line_y = py + 50
         for line in lines:
-            cv2.putText(frame, line, (px + 10, line_y), FONT, 0.28, WHITE, 1, cv2.LINE_AA)
+            cv2.putText(frame, line, (px + 10, line_y), FONT, 0.28, PURE_RED, 1, cv2.LINE_AA)
             line_y += 18
         
         # Draw Finish Game button
