@@ -1,0 +1,85 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "signsense"
+version = "1.0.0"
+description = "SignSense - ASL Sign Language Learning Application"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9,<3.13"
+authors = [
+    {name = "SignSense Team"}
+]
+keywords = ["sign-language", "asl", "machine-learning", "opencv", "mediapipe"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Education",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Education",
+    "Topic :: Multimedia :: Video :: Capture",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "mediapipe>=0.10.31",
+    "opencv-python>=4.8.0",
+    "numpy>=1.24.0",
+    "torch>=2.0.0",
+    "pillow>=9.0.0",
+    "pandas>=1.5.0",
+    "matplotlib>=3.7.0",
+    "scikit-learn>=1.2.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "flake8>=6.0.0",
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pyinstaller>=6.0.0",
+    "pyinstaller-hooks-contrib>=2024.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/signsense/signsense"
+Repository = "https://github.com/signsense/signsense"
+Documentation = "https://github.com/signsense/signsense#readme"
+"Bug Tracker" = "https://github.com/signsense/signsense/issues"
+
+[project.scripts]
+signsense = "signsense.main:main"
+
+[tool.setuptools.packages.find]
+include = ["signsense*"]
+
+[tool.setuptools.package-data]
+signsense = [
+    "assets/models/*.task",
+    "config/*.yaml",
+    "ml/config/*.yaml",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+
+[tool.flake8]
+max-line-length = 127
+max-complexity = 10
+exclude = [
+    ".git",
+    "__pycache__",
+    "build",
+    "dist",
+    "*.egg-info",
+    ".venv",
+]
